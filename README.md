@@ -1,4 +1,4 @@
-# kps — key-pinned streams
+# KPS — key-pinned streams
 
 A small library for opening TCP-like streams between two parties identified
 by a cryptographic public key, not by a domain name signed by a certificate
@@ -12,7 +12,7 @@ connection cannot be intercepted.
 
 The browser-to-server channel that the web is built on requires a CA-signed
 cert for a registered domain — a model that solves authentication by
-delegating to authorities. `kps` gives you the same thing without those
+delegating to authorities. KPS gives you the same thing without those
 dependencies: server identity is its key. Clients pin the key out-of-band
 (in code, in a config file, in a QR code, in a multiaddr, however).
 
@@ -38,10 +38,10 @@ trick is great; the libp2p baggage on top (multistream-select, Noise XX
 on a key separate from the cert, peer store, connection manager, peer
 discovery, varint-framed protobuf wire formats, etc.) is paying for
 properties that aren't needed for "browsers securely talk to a known
-server" — so `kps` strips it down to just the pinned-key stream.
+server" — so KPS strips it down to just the pinned-key stream.
 
 What's intentionally **not** here:
-- Peer discovery — kps clients dial a known address.
+- Peer discovery — KPS clients dial a known address.
 - Multistream-select — stream name is the data-channel label.
 - A second pinned key beyond the cert — the cert hash is the identity.
 - Any framing or message format — message-oriented data channels pass

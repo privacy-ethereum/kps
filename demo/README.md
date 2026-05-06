@@ -1,20 +1,20 @@
-# kps-demo
+# KPS demo
 
 A port of [`webrtc-direct-demo`](https://github.com/voltrevo/webrtc-direct-demo)
-to **kps**.
+to **KPS**.
 
 Same two services on top — public bulletin + E2EE direct messages, and a
 multi-network Ethereum block explorer powered by a JSON-RPC proxy — wired
-to a single kps connection instead of libp2p WebRTC Direct.
+to a single KPS connection instead of libp2p WebRTC Direct.
 
 ## What's different from the libp2p version
 
-| | libp2p webrtc-direct-demo | kps demo |
+| | libp2p webrtc-direct-demo | KPS demo |
 |---|---|---|
 | address | `/ip4/.../udp/.../webrtc-direct/certhash/.../p2p/...` | `<ip>:<port>:<keyhash>` |
 | handshake | DTLS (cert-pinned) + Noise XX (peer-id-pinned) | DTLS only (cert-pinned) |
 | connection-layer identity | server's libp2p peer ID | none — cert hash *is* the identity |
-| application-layer identity | libp2p peer ID for both ends | per-client Ed25519 keypair (kps doesn't expose one) |
+| application-layer identity | libp2p peer ID for both ends | per-client Ed25519 keypair (KPS doesn't expose one) |
 | stream framing | multistream-select protocol IDs | data-channel labels (`chat`, `eth-rpc`) |
 | server | Node.js + js-libp2p | Go + `kps/server` |
 
@@ -33,7 +33,7 @@ web/extension/  MV3 manifest + bg script for Chrome unpacked-extension build
 
 ## Run
 
-The web app depends on the kps client, which lives one level up. Build it
+The web app depends on the KPS client, which lives one level up. Build it
 once first:
 
 ```sh
@@ -70,7 +70,7 @@ Open the printed URL, click **Try it**, paste the server's address,
 
 ### Pick the right address
 
-kps is just UDP underneath. The browser must reach the server's UDP
+KPS is just UDP underneath. The browser must reach the server's UDP
 port directly:
 
 - **Same machine** — leave the default; the server will print a
@@ -157,7 +157,7 @@ chain IDs and short aliases — `eth`, `arb`, `op`, `poly`, `matic`).
 
 This descends directly from the libp2p WebRTC Direct demo
 ([voltrevo/webrtc-direct-demo](https://github.com/voltrevo/webrtc-direct-demo)).
-The transport trick is the same; this version strips out everything kps
+The transport trick is the same; this version strips out everything KPS
 intentionally drops (Noise XX, multistream-select, peer store, varint
 framing) and substitutes a minimal application-level Ed25519 identity for
 the DM-signing path.

@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>kps Demo</title>
+    <title>KPS Demo</title>
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
     <div class="page">
       <header class="app-header">
         <div class="header-title">
-          <h1 id="title">kps Demo</h1>
+          <h1 id="title">KPS Demo</h1>
           <a class="github-link"
              href="https://github.com/voltrevo/kps"
              target="_blank"
@@ -46,7 +46,7 @@
             <li>You must present a certificate signed by a certificate authority.</li>
           </ol>
           <p class="lede">
-            <strong>kps</strong> (key-pinned streams) restores the freedom to talk to
+            <strong>KPS</strong> (key-pinned streams) restores the freedom to talk to
             cryptographic identities instead of just those with
             authority-controlled names.
           </p>
@@ -60,12 +60,12 @@
               The keyhash is the SHA-256 of the server's self-signed TLS cert,
               multibase-encoded (e.g. <code>uEi…</code>).
             </li><li class="lede">
-              kps is built on the same wire trick as libp2p's WebRTC Direct: the
+              KPS is built on the same wire trick as libp2p's WebRTC Direct: the
               server listens on UDP, both sides synthesize the SDP from the
               address, the browser accepts the DTLS handshake only if the cert
               hashes to the pinned value. No signalling server.
             </li><li class="lede">
-              Unlike the libp2p version, kps drops everything above DTLS:
+              Unlike the libp2p version, KPS drops everything above DTLS:
               no Noise XX, no multistream-select, no peer store. Stream name
               is the data-channel label; the cert hash is the only pinned key.
             </li>
@@ -156,7 +156,7 @@ go run .</code></pre>
         <section class="card">
           <h3>Pick the right address</h3>
           <p class="lede-sm">
-            kps is just UDP underneath. The browser must reach the
+            KPS is just UDP underneath. The browser must reach the
             server's UDP port directly:
           </p>
           <ul class="choices">
