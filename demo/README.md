@@ -46,7 +46,7 @@ Server (Go 1.24+):
 
 ```sh
 cd demo/server
-go run .          # binds a free UDP port; persists port + key for next start
+go run .          # binds a free UDP port; persists port + cert in state.json
 # or: go run . -listen :41108 -ip 192.168.1.50
 ```
 

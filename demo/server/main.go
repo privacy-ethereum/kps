@@ -527,8 +527,12 @@ func rpcHandler(stream *kps.Stream) {
 
 // ---- state ----
 
+// state is persisted as JSON: the TLS cert + key (combined PEM) and the
+// chosen UDP port live together so the printed address stays byte-stable
+// across restarts.
 type state struct {
-	Port int `json:"port"`
+	Port int    `json:"port"`
+	TLS  string `json:"tls"` // combined PEM (PRIVATE KEY + CERTIFICATE)
 }
 
 func loadState(path string) (*state, error) {
@@ -559,24 +563,35 @@ func saveState(path string, s *state) error {
 
 func main() {
 	listenFlag := flag.String("listen", "", "host:port to bind UDP socket (default: pick free port; persists in state.json)")
-	keyFlag := flag.String("key", "./kps.key", "path to persistent server key (created if absent)")
-	stateFlag := flag.String("state", "./state.json", "path to persistent listen-port state")
+	stateFlag := flag.String("state", "./state.json", "path to persistent state (port + TLS cert)")
 	ipFlag := flag.String("ip", "", "ip to advertise in printed address (default: auto)")
 	flag.Parse()
 
 	rand.Seed(time.Now().UnixNano())
 
-	listenAddr := *listenFlag
-	var savedState *state
-	if listenAddr == "" {
-		var err error
-		savedState, err = loadState(*stateFlag)
+	saved, err := loadState(*stateFlag)
+	if err != nil {
+		log.Fatalf("load state: %v", err)
+	}
+
+	var identity *kps.Identity
+	if saved != nil && saved.TLS != "" {
+		identity, err = kps.IdentityFromPEM(saved.TLS)
 		if err != nil {
-			log.Fatalf("load state: %v", err)
+			log.Fatalf("load identity from %s: %v", *stateFlag, err)
 		}
+	} else {
+		identity, err = kps.GenerateIdentity()
+		if err != nil {
+			log.Fatalf("generate identity: %v", err)
+		}
+	}
+
+	listenAddr := *listenFlag
+	if listenAddr == "" {
 		port := 0
-		if savedState != nil {
-			port = savedState.Port
+		if saved != nil {
+			port = saved.Port
 		}
 		listenAddr = fmt.Sprintf(":%d", port)
 	}
@@ -584,17 +599,35 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	listener, err := kps.Listen(ctx, listenAddr, kps.Options{KeyFile: *keyFlag})
+	listener, err := kps.Listen(ctx, listenAddr, kps.Options{Identity: identity})
 	if err != nil {
 		log.Fatalf("listen: %v", err)
 	}
 	defer listener.Close()
 
-	if *listenFlag == "" && (savedState == nil || savedState.Port == 0) {
-		if err := saveState(*stateFlag, &state{Port: listener.Port()}); err != nil {
+	freshCert := saved == nil || saved.TLS == ""
+	freshPort := *listenFlag == "" && (saved == nil || saved.Port == 0)
+	if freshCert || freshPort {
+		next := state{}
+		if saved != nil {
+			next = *saved
+		}
+		if freshCert {
+			pemStr, err := identity.PEM()
+			if err != nil {
+				log.Fatalf("serialize identity: %v", err)
+			}
+			next.TLS = pemStr
+		}
+		if freshPort {
+			next.Port = listener.Port()
+		}
+		if err := saveState(*stateFlag, &next); err != nil {
 			log.Printf("warn: save state: %v", err)
 		} else {
-			log.Printf("saved state to %s; future starts will reuse this port and key", *stateFlag)
+			log.Printf("saved state to %s; future starts will reuse this cert%s",
+				*stateFlag,
+				map[bool]string{true: " and port", false: ""}[freshPort])
 		}
 	}
 

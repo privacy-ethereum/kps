@@ -36,8 +36,13 @@ type Listener struct {
 type StreamHandler func(*Stream)
 
 type Options struct {
-	// KeyFile path to the persistent ECDSA P-256 key (PEM-encoded
-	// PKCS#8). Created if absent.
+	// Identity, when set, is used directly. The Listener writes nothing
+	// to disk; the caller is responsible for persistence. Use
+	// kps.GenerateIdentity / kps.IdentityFromPEM / (*Identity).PEM.
+	Identity *Identity
+
+	// KeyFile path to the persistent combined PEM (PRIVATE KEY +
+	// CERTIFICATE). Created if absent. Ignored when Identity is set.
 	KeyFile string
 }
 
@@ -57,12 +62,16 @@ type packetIn struct {
 // `addr` is a host:port string in net.Dial form (use ":0" for an
 // ephemeral port).
 func Listen(ctx context.Context, addr string, opts Options) (*Listener, error) {
-	if opts.KeyFile == "" {
-		opts.KeyFile = "kps.key"
-	}
-	identity, err := LoadOrCreateIdentity(opts.KeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("kps: load identity: %w", err)
+	identity := opts.Identity
+	if identity == nil {
+		if opts.KeyFile == "" {
+			opts.KeyFile = "kps.key"
+		}
+		var err error
+		identity, err = LoadOrCreateIdentity(opts.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("kps: load identity: %w", err)
+		}
 	}
 
 	udpAddr, err := net.ResolveUDPAddr("udp4", addr)

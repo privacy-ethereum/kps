@@ -26,60 +26,130 @@ type Identity struct {
 
 const certLifetime = 200 * 365 * 24 * time.Hour
 
-// LoadOrCreateIdentity reads keyPath if it exists, otherwise generates a
-// new ECDSA P-256 key, writes it to keyPath, and derives a self-signed
-// cert from it. The cert hash is stable as long as the key file is.
-func LoadOrCreateIdentity(keyPath string) (*Identity, error) {
-	priv, err := loadOrCreateKey(keyPath)
-	if err != nil {
-		return nil, err
-	}
-	return identityFromKey(priv)
-}
-
-func loadOrCreateKey(path string) (*ecdsa.PrivateKey, error) {
-	data, err := os.ReadFile(path)
-	if err == nil {
-		block, _ := pem.Decode(data)
-		if block == nil {
-			return nil, fmt.Errorf("kps: %s does not contain PEM data", path)
-		}
-		key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-		if err != nil {
-			return nil, fmt.Errorf("kps: parse %s: %w", path, err)
-		}
-		ec, ok := key.(*ecdsa.PrivateKey)
-		if !ok {
-			return nil, fmt.Errorf("kps: %s is not an ECDSA key", path)
-		}
-		return ec, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-
+// GenerateIdentity mints a fresh ECDSA P-256 key + self-signed cert.
+// Use this when you want to manage the on-disk format yourself; pair
+// with (*Identity).PEM() for serialization and IdentityFromPEM for load.
+func GenerateIdentity() (*Identity, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return nil, err
 	}
-	der, err := x509.MarshalPKCS8PrivateKey(priv)
+	cert, err := buildCert(priv)
 	if err != nil {
 		return nil, err
 	}
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
-	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
-		return nil, err
-	}
-	return priv, nil
+	return identityFromCert(cert)
 }
 
-func identityFromKey(priv *ecdsa.PrivateKey) (*Identity, error) {
-	// Pion's NewCertificate takes a *template* and re-issues the cert.
-	// We therefore can't compute certhash from a pre-built DER — we must
-	// build the cert via pion and derive the hash from what pion produced.
-	// To keep certhash stable across restarts (given a stable key), we
-	// pass deterministic template fields: fixed serial, fixed validity
-	// window anchored to the key (encoded in NotBefore so reissues match).
+// IdentityFromPEM parses the combined PEM produced by (*Identity).PEM().
+func IdentityFromPEM(pemStr string) (*Identity, error) {
+	cert, err := webrtc.CertificateFromPEM(pemStr)
+	if err != nil {
+		return nil, err
+	}
+	return identityFromCert(cert)
+}
+
+// PEM returns the combined PRIVATE KEY + CERTIFICATE PEM. Round-trips
+// through IdentityFromPEM with the same certhash.
+func (i *Identity) PEM() (string, error) {
+	return i.Certificate.PEM()
+}
+
+// LoadOrCreateIdentity reads keyPath if it exists, otherwise generates a
+// new ECDSA P-256 key + self-signed cert and writes them out together.
+//
+// The file holds both the PRIVATE KEY and CERTIFICATE PEM blocks, so the
+// certhash is byte-stable across restarts: the cert is built once and
+// then loaded verbatim on subsequent starts.
+//
+// For backwards compatibility, a file containing only a PRIVATE KEY block
+// (the previous on-disk format) is accepted: a fresh cert is built from
+// that key and the file is rewritten in the combined format. The cert
+// hash will change at the migration boundary, but stay stable thereafter.
+func LoadOrCreateIdentity(keyPath string) (*Identity, error) {
+	data, err := os.ReadFile(keyPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	if err == nil {
+		if cert, ok := tryLoadCombinedPEM(data); ok {
+			return identityFromCert(cert)
+		}
+		// Legacy key-only file: build cert from key and rewrite combined PEM.
+		priv, err := parseKeyPEM(data, keyPath)
+		if err != nil {
+			return nil, err
+		}
+		cert, err := buildCert(priv)
+		if err != nil {
+			return nil, err
+		}
+		if err := writeCombinedPEM(keyPath, cert); err != nil {
+			return nil, fmt.Errorf("kps: rewrite %s with cert: %w", keyPath, err)
+		}
+		return identityFromCert(cert)
+	}
+
+	// File doesn't exist — generate fresh key + cert and persist together.
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	cert, err := buildCert(priv)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeCombinedPEM(keyPath, cert); err != nil {
+		return nil, err
+	}
+	return identityFromCert(cert)
+}
+
+func tryLoadCombinedPEM(data []byte) (*webrtc.Certificate, bool) {
+	rest := data
+	hasCert := false
+	hasKey := false
+	for {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			break
+		}
+		switch block.Type {
+		case "CERTIFICATE":
+			hasCert = true
+		case "PRIVATE KEY", "EC PRIVATE KEY":
+			hasKey = true
+		}
+	}
+	if !hasCert || !hasKey {
+		return nil, false
+	}
+	cert, err := webrtc.CertificateFromPEM(string(data))
+	if err != nil {
+		return nil, false
+	}
+	return cert, true
+}
+
+func parseKeyPEM(data []byte, path string) (*ecdsa.PrivateKey, error) {
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("kps: %s does not contain PEM data", path)
+	}
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("kps: parse %s: %w", path, err)
+	}
+	ec, ok := key.(*ecdsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("kps: %s is not an ECDSA key", path)
+	}
+	return ec, nil
+}
+
+func buildCert(priv *ecdsa.PrivateKey) (*webrtc.Certificate, error) {
 	notBefore := time.Now().Add(-1 * time.Hour)
 	notAfter := notBefore.Add(certLifetime)
 	tmpl := x509.Certificate{
@@ -90,12 +160,18 @@ func identityFromKey(priv *ecdsa.PrivateKey) (*Identity, error) {
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 	}
-	cert, err := webrtc.NewCertificate(priv, tmpl)
-	if err != nil {
-		return nil, err
-	}
+	return webrtc.NewCertificate(priv, tmpl)
+}
 
-	// Pull pion's actual cert fingerprint so client and server agree.
+func writeCombinedPEM(path string, cert *webrtc.Certificate) error {
+	pemStr, err := cert.PEM()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(pemStr), 0o600)
+}
+
+func identityFromCert(cert *webrtc.Certificate) (*Identity, error) {
 	prints, err := cert.GetFingerprints()
 	if err != nil {
 		return nil, err
@@ -158,4 +234,3 @@ func splitColons(s string) []string {
 	parts = append(parts, s[start:])
 	return parts
 }
-
