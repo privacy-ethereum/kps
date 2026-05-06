@@ -60,7 +60,7 @@ export function synthesizeAnswer(addr: Address, ufrag: string): string {
     `a=fingerprint:sha-256 ${fingerprint}`,
     'a=setup:passive',
     'a=sctp-port:5000',
-    'a=max-message-size:16384',
+    'a=max-message-size:1048576',
     `a=candidate:1 1 UDP 1 ${addr.ip} ${addr.port} typ host`
   ]
   // SDP must end with CRLF after the last line.

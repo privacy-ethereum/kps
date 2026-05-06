@@ -309,7 +309,7 @@ func buildClientOffer(ufrag string, port int) string {
 		fmt.Sprintf("a=fingerprint:sha-256 %s", placeholderFingerprint),
 		"a=setup:active",
 		"a=sctp-port:5000",
-		"a=max-message-size:16384",
+		"a=max-message-size:1048576",
 	}
 	return strings.Join(lines, "\r\n") + "\r\n"
 }

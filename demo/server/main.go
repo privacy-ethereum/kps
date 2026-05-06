@@ -456,12 +456,15 @@ func rpcHandler(stream *kps.Stream) {
 	send := func(obj any) {
 		b, err := json.Marshal(obj)
 		if err != nil {
+			log.Printf("[rpc] marshal: %v", err)
 			return
 		}
 		b = append(b, '\n')
 		sendMu.Lock()
 		defer sendMu.Unlock()
-		_ = stream.Send(b)
+		if err := stream.Send(b); err != nil {
+			log.Printf("[rpc] send (%d bytes): %v", len(b), err)
+		}
 	}
 
 	var pending sync.WaitGroup
@@ -517,9 +520,13 @@ func rpcHandler(stream *kps.Stream) {
 					return
 				}
 				// resp already shaped as a JSON-RPC response; forward verbatim.
+				out := append(resp, '\n')
 				sendMu.Lock()
-				_ = stream.Send(append(resp, '\n'))
+				err = stream.Send(out)
 				sendMu.Unlock()
+				if err != nil {
+					log.Printf("[rpc] send response (%d bytes, network=%s): %v", len(out), network, err)
+				}
 			}(line)
 		}
 	}
