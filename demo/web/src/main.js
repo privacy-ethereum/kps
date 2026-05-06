@@ -8,7 +8,7 @@ const BULLETIN = '__bulletin__'
 const RPC_TIMEOUT_MS = 20_000
 
 // If you run a public demo server, hardcode its address here.
-const DEMO_ADDR = ''
+const DEMO_ADDR = '170.64.236.147:60949:uEiCkUUDgDV1i0X-h7AS3yMiv_aVZV2C0vige93oBFa2l6Q'
 const SAVED_ADDRS_KEY = 'kps-demo:saved-addresses'
 const PERSISTENT_IDENTITY_KEY = 'kps-demo:persistent-identity'
 const IDENTITY_KEY_STORAGE_KEY = 'kps-demo:identity-key'
