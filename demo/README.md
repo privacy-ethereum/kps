@@ -1,5 +1,7 @@
 # KPS demo
 
+![Browser dials a KPS server over UDP directly — no signalling server, CA, or domain registrar required.](web/public/banner.avif)
+
 A port of [`webrtc-direct-demo`](https://github.com/voltrevo/webrtc-direct-demo)
 to **KPS**.
 

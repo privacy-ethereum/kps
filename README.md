@@ -1,5 +1,7 @@
 # KPS — key-pinned streams
 
+![Browser dials a KPS server over UDP directly — no signalling server, CA, or domain registrar required.](demo/web/public/banner.avif)
+
 A small library for opening TCP-like streams between two parties identified
 by a cryptographic public key, not by a domain name signed by a certificate
 authority.
