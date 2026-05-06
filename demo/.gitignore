@@ -1,0 +1,6 @@
+server/server
+server/kps.key
+server/state.json
+web/node_modules
+web/dist
+web/dist-extension
