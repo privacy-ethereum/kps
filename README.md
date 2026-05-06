@@ -1,4 +1,4 @@
-# KPS — key-pinned streams
+# KPS — key-pinned stream
 
 ![Browser dials a KPS server over UDP directly — no signalling server, CA, or domain registrar required.](demo/web/public/banner.avif)
 
