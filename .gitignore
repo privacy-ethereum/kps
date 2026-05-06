@@ -1,0 +1,20 @@
+# node
+**/node_modules/
+**/dist/
+**/.run-state.json
+
+# go
+server/server
+*.key
+
+# playwright
+**/test-results/
+**/playwright-report/
+
+# editor / os
+.DS_Store
+.vscode/
+.idea/
+
+# logs
+*.log
