@@ -129,10 +129,27 @@ and a Go QUIC client both connect to the **same** listener UDP port.
 
 ---
 
-## Milestone 4 — Interop test matrix
+## Milestone 4 — Interop test matrix — COMPLETE
 
 Executable version of SPEC §10: browser-WebRTC↔Go, Go-QUIC↔Go, both-on-one-port,
 multi-conn, multi-stream, closeWrite/cancelRead/resetWrite. Wire into CI.
+
+Done:
+- **Go WebRTC client** (`DialWebRTC`) — the spec's "explicit transport override"
+  (SPEC §5.4); mirrors the browser dial (synthesized answer, certhash-derived ICE
+  pwd, pion pins the server cert via the answer fingerprint). Lets the WebRTC
+  transport be tested programmatically, no browser required.
+- **Interop matrix** (`libs/go/*_test.go`): §10.2 QUIC echo, §10.4 multi-conn,
+  §10.5 multi-stream, §10.6 closeWrite→EOF, §10.7 cancelRead→peer-stop,
+  §10.8 resetWrite→peer-error — each over **both** transports where applicable;
+  §10.3 **both transports on one UDP port simultaneously** in a single process;
+  certhash-mismatch rejection; and framing wire-format unit tests (the bytes the
+  Go and JS impls must agree on).
+- §10.1 browser-WebRTC↔Go stays covered by the Playwright test.
+- **CI** (`.github/workflows/ci.yml`): Go build/vet/test + JS build + Playwright.
+  Note: QUIC client tests need real UDP socket access (DF/GSO/ECN socket options),
+  so they must not run under a restrictive seccomp sandbox — CI runners are fine.
+- §10.9 datagrams remain unimplemented (capability reports unsupported) → M5.
 
 ---
 
