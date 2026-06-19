@@ -153,11 +153,28 @@ Done:
 
 ---
 
-## Milestone 5 — Datagrams (optional) + docs polish
+## Milestone 5 — Datagrams (REQUIRED) + docs polish — CORE COMPLETE
 
-Implement datagrams behind the capability check (QUIC DATAGRAM; WebRTC reserved
-unreliable channel), or consciously defer. Fill in `SECURITY.md`,
-`address-format.md`, `stream-semantics.md`, `datagrams.md`.
+Datagrams are **mandatory**, not optional (decided with the maintainer: both v0
+transports carry them natively and the listener controls both ends, so there is
+no "unsupported" state — only a size limit; a reliable-only future transport
+would be the only reason to gate, and QUIC already replaced that idea).
+
+Done:
+- Mandatory datagram API: `SupportsDatagrams()` and any queryable size property
+  removed; `SendDatagram`/`ReceiveDatagram` (Go) and `conn.datagrams.{send,incoming}`
+  (JS) always live. The per-connection size limit is transport/path-dependent, so
+  it is surfaced via the oversized-send error (`*DatagramTooLargeError{MaxDatagramPayloadSize}`
+  / `{code:'too-large'}`), mirroring QUIC; ~1100 bytes is safe on any connection.
+- QUIC: `EnableDatagrams` on both ends → QUIC DATAGRAM (RFC 9221).
+- WebRTC: reserved negotiated unreliable/unordered channel (ID 1) on the Go
+  server, Go client, and JS browser client; bounded inbound buffer (drop-oldest).
+- Interop tests: datagram round-trip over QUIC and WebRTC, and oversize→too-large.
+- SPEC §7/§8/§10.9 rewritten from "optional/capability-gated" to "required".
+
+Remaining polish (optional): the per-topic doc split (`address-format.md`,
+`stream-semantics.md`, `datagrams.md`) — currently all covered inline in
+`SPEC.md`, so these would be pointers, deferred as low-value.
 
 ---
 

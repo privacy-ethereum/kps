@@ -258,42 +258,48 @@ WebRTC mapping behave like the QUIC mapping.
 
 ---
 
-## 7. Datagrams (optional, capability-gated)
+## 7. Datagrams (required)
 
-KPS does **not** offer "unreliable streams." If unreliable delivery is offered,
-it is modelled as connection-level datagrams:
+KPS does **not** offer "unreliable streams." Unreliable delivery is modelled as
+connection-level datagrams, which **every KPS connection MUST provide**:
 
 - unreliable, unordered, message-oriented, size-limited
 - encrypted/authenticated under the connection
 - independent of streams
-- optional — gated behind a capability check
 
-API shape (illustrative). `datagrams` is always present; the capability is
-gated by `maxSize` (0 ⇒ unsupported) and a `send` that rejects with
-`"unsupported"`. Inbound datagrams arrive unsolicited, so they are delivered
-through a bounded buffer (e.g. drop-oldest when full), not a single racing
-receive:
+Datagram support is a conformance requirement for KPS transports, like reliable
+streams. Both v0 transports carry datagrams natively and a listener controls
+both ends, so there is **no "unsupported" state** — only a size limit. (A future
+reliable-only transport that could not carry datagrams would have to reintroduce
+a capability gate; v0 has none.)
+
+There is a per-connection datagram size limit, but it is transport- and
+path-dependent, so KPS does **not** expose it as a fixed property. Instead an
+oversized send fails with a **too-large error that reports the current limit**
+(mirroring QUIC). As a rule of thumb, **payloads up to ~1100 bytes are safe on
+every connection**; larger payloads may or may not fit. Delivery is best-effort:
+a sent datagram may never arrive. Inbound datagrams arrive unsolicited, so they
+are delivered through a bounded buffer (drop-oldest when full), not a single
+racing receive.
+
+API shape (illustrative):
 
 ```ts
-conn.datagrams.maxSize                 // 0 ⇒ unsupported
-await conn.datagrams.send(bytes)       // rejects "too-large" / "unsupported"
+// rejects with { code: 'too-large', maxDatagramPayloadSize } if over the limit
+await conn.datagrams.send(bytes)
 conn.datagrams.incoming                // ReadableStream<Uint8Array> (bounded)
 ```
 ```go
-ok  := conn.SupportsDatagrams()
-err := conn.SendDatagram(p)
+err := conn.SendDatagram(p)            // *DatagramTooLargeError{MaxDatagramPayloadSize} if over the limit
 p, err := conn.ReceiveDatagram(ctx)
 ```
 
 Transport mappings:
 
-- **QUIC** — QUIC DATAGRAM frames (when negotiated).
+- **QUIC** — QUIC DATAGRAM frames (RFC 9221), enabled on both ends.
 - **WebRTC** — a single reserved unreliable, unordered data channel
-  (`ordered:false`, `maxRetransmits:0`, negotiated, fixed ID). It MUST NOT
+  (`ordered:false`, `maxRetransmits:0`, negotiated, fixed ID `1`). It MUST NOT
   surface as an application stream.
-
-An implementation MAY report datagrams unsupported in v0. The abstraction MUST
-exist so datagrams can be added later without an API break.
 
 ---
 
@@ -304,8 +310,7 @@ surface as application streams or be relied upon by applications:
 
 - WebRTC bootstrap data channel — negotiated, fixed ID `0`, used only to force
   the SCTP association up. Never delivered as a stream.
-- WebRTC datagram channel (§7) — negotiated, fixed ID `1` when datagrams are
-  enabled.
+- WebRTC datagram channel (§7) — negotiated, fixed ID `1`, always present.
 - Any data-channel label.
 
 ---
@@ -357,7 +362,7 @@ Conforming implementations MUST interoperate across these scenarios:
 6. Stream EOF via `closeWrite`.
 7. Read cancellation via `cancelRead`.
 8. Write reset via `resetWrite`.
-9. Datagram capability — only if implemented; otherwise the capability check
-   reports unsupported on both ends.
+9. Datagrams — send/receive over QUIC (DATAGRAM) and WebRTC (the reserved
+   unreliable channel); oversize payloads rejected with `too-large`.
 
 See `tests/interop/` for the executable matrix.

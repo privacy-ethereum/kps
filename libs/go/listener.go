@@ -118,7 +118,7 @@ func (l *Listener) startQUIC() error {
 	}
 	l.qpc = newQUICPacketConn(l.udp)
 	l.quicTr = &quic.Transport{Conn: l.qpc}
-	ln, err := l.quicTr.Listen(tlsConf, &quic.Config{})
+	ln, err := l.quicTr.Listen(tlsConf, &quic.Config{EnableDatagrams: true})
 	if err != nil {
 		return fmt.Errorf("kps: quic listen: %w", err)
 	}

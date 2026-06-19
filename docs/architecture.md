@@ -36,8 +36,8 @@ const inbound = await conn.acceptStream({ signal })
 await conn.close(reason?)
 conn.closed                               // Promise<KpsConnCloseInfo>
 
-// datagrams: always present; capability gated via maxSize / "unsupported" error
-conn.datagrams.maxSize
+// datagrams: always available (required). Size limit surfaces via the send
+// error (code 'too-large', maxDatagramPayloadSize); ~1100 bytes is safe.
 await conn.datagrams.send(bytes)
 conn.datagrams.incoming                   // ReadableStream<Uint8Array> (bounded buffer)
 
@@ -75,8 +75,7 @@ func handleConn(conn kps.Conn) {
     }
 }
 
-// optional datagrams
-ok := conn.SupportsDatagrams()
+// datagrams (always available; required). Oversized send → *DatagramTooLargeError
 err := conn.SendDatagram(p)
 p, err := conn.ReceiveDatagram(ctx)
 

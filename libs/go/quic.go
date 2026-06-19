@@ -36,7 +36,7 @@ func Dial(ctx context.Context, addr string) (Conn, error) {
 		NextProtos:            []string{alpnKPS},
 		VerifyPeerCertificate: pinCerthash(digest),
 	}
-	qc, err := quic.DialAddr(ctx, fmt.Sprintf("%s:%d", a.IP, a.Port), tlsConf, &quic.Config{})
+	qc, err := quic.DialAddr(ctx, fmt.Sprintf("%s:%d", a.IP, a.Port), tlsConf, &quic.Config{EnableDatagrams: true})
 	if err != nil {
 		return nil, fmt.Errorf("kps: quic dial: %w", err)
 	}
@@ -82,12 +82,20 @@ func (c *quicConn) AcceptStream(ctx context.Context) (Stream, error) {
 	return &quicStream{qs: qs}, nil
 }
 
-func (c *quicConn) Close() error             { return c.qc.CloseWithError(0, "") }
-func (c *quicConn) Closed() <-chan struct{}  { return c.qc.Context().Done() }
-func (c *quicConn) SupportsDatagrams() bool  { return false }
-func (c *quicConn) SendDatagram([]byte) error { return ErrDatagramsUnsupported }
-func (c *quicConn) ReceiveDatagram(context.Context) ([]byte, error) {
-	return nil, ErrDatagramsUnsupported
+func (c *quicConn) Close() error            { return c.qc.CloseWithError(0, "") }
+func (c *quicConn) Closed() <-chan struct{} { return c.qc.Context().Done() }
+
+func (c *quicConn) SendDatagram(p []byte) error {
+	err := c.qc.SendDatagram(p) // QUIC DATAGRAM (RFC 9221)
+	var tooLarge *quic.DatagramTooLargeError
+	if errors.As(err, &tooLarge) {
+		return &DatagramTooLargeError{MaxDatagramPayloadSize: int(tooLarge.MaxDatagramPayloadSize)}
+	}
+	return err
+}
+
+func (c *quicConn) ReceiveDatagram(ctx context.Context) ([]byte, error) {
+	return c.qc.ReceiveDatagram(ctx)
 }
 
 // quicStream maps kps stream lifecycle onto QUIC's native mechanisms (SPEC §6.3):

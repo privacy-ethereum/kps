@@ -2,8 +2,22 @@ package kps
 
 import (
 	"context"
+	"fmt"
 	"io"
 )
+
+// DatagramTooLargeError is returned by SendDatagram when the payload exceeds the
+// connection's current datagram size limit. The limit is transport- and
+// path-dependent (so KPS does not expose it as a fixed property); this error
+// reports it, mirroring QUIC. As a rule of thumb, payloads up to ~1100 bytes are
+// safe on every connection; larger payloads may or may not fit.
+type DatagramTooLargeError struct {
+	MaxDatagramPayloadSize int
+}
+
+func (e *DatagramTooLargeError) Error() string {
+	return fmt.Sprintf("kps: datagram exceeds limit (max %d bytes)", e.MaxDatagramPayloadSize)
+}
 
 // Conn is an authenticated, secure, multiplexed kps session (SPEC §4),
 // carrying any number of independent byte Streams. It is implemented by both
@@ -18,9 +32,10 @@ type Conn interface {
 	// Closed is closed when the connection ends.
 	Closed() <-chan struct{}
 
-	// SupportsDatagrams reports whether connection-level datagrams are
-	// available (SPEC §7).
-	SupportsDatagrams() bool
+	// Datagrams are unreliable, unordered, size-limited messages available on
+	// every connection (SPEC §7). There is a per-connection size limit; an
+	// oversized SendDatagram returns a *DatagramTooLargeError reporting it.
+	// Delivery is best-effort: a sent datagram may never arrive.
 	SendDatagram(p []byte) error
 	ReceiveDatagram(ctx context.Context) ([]byte, error)
 }

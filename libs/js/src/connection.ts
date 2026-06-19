@@ -21,7 +21,10 @@ export interface ConnCloseInfo {
 // Datagrams (SPEC §7) — capability gated. Always present; unsupported in v0 over
 // WebRTC, signalled by maxSize 0 and a send() that rejects.
 export interface Datagrams {
-  readonly maxSize: number
+  // Send one unreliable, unordered datagram. There is a per-connection size
+  // limit (transport/path dependent); an oversized send rejects with an error
+  // carrying `code: 'too-large'` and `maxDatagramPayloadSize`. Payloads up to
+  // ~1100 bytes are safe on every connection.
   send(data: Uint8Array, opts?: { signal?: AbortSignal }): Promise<void>
   readonly incoming: ReadableStream<Uint8Array>
 }
@@ -31,18 +34,59 @@ const DEFAULT_TIMEOUT = 15_000
 // a server-side stream. Its only job is to force the SCTP m-line into the offer.
 const BOOTSTRAP_LABEL = '_kps_bootstrap'
 const BOOTSTRAP_ID = 0
+// Reserved datagram channel (SPEC §7/§8): negotiated, unreliable, unordered.
+const DATAGRAM_LABEL = '_kps_datagrams'
+const DATAGRAM_ID = 1
+// Cap WebRTC datagrams to a sub-MTU size so each travels as a single unreliable
+// SCTP message (matches the Go webrtcMaxDatagram). The limit surfaces via the
+// send error; ~1100 bytes is safe on any connection.
+const WEBRTC_MAX_DATAGRAM = 1200
 
-function unsupportedDatagrams(): Datagrams {
+function bytesToArrayBuffer(u8: Uint8Array): ArrayBuffer {
+  return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer
+}
+
+// makeDatagrams backs the Datagrams API with the reserved unreliable channel.
+// Inbound datagrams use a bounded buffer (drop-oldest when full); delivery is
+// best-effort.
+function makeDatagrams(dg: RTCDataChannel): Datagrams {
+  dg.binaryType = 'arraybuffer'
+  const MAXQ = 256
+  const queue: Uint8Array[] = []
+  let waiter: ((v: Uint8Array) => void) | null = null
+  dg.addEventListener('message', (e) => {
+    const raw = (e as MessageEvent).data as ArrayBuffer | string
+    const data = typeof raw === 'string' ? new TextEncoder().encode(raw) : new Uint8Array(raw)
+    if (waiter) { const w = waiter; waiter = null; w(data); return }
+    queue.push(data)
+    if (queue.length > MAXQ) queue.shift() // drop-oldest
+  })
+  const incoming = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      const next = queue.shift()
+      if (next) { controller.enqueue(next); return }
+      return new Promise<void>(resolve => {
+        waiter = (v) => { controller.enqueue(v); resolve() }
+      })
+    }
+  })
   return {
-    maxSize: 0,
-    async send() { throw new Error('kps: datagrams not supported') },
-    incoming: new ReadableStream<Uint8Array>({ start(c) { c.close() } })
+    async send(data: Uint8Array) {
+      if (data.length > WEBRTC_MAX_DATAGRAM) {
+        const e = new Error(`kps: datagram exceeds limit (max ${WEBRTC_MAX_DATAGRAM} bytes)`)
+        Object.assign(e, { code: 'too-large', maxDatagramPayloadSize: WEBRTC_MAX_DATAGRAM })
+        throw e
+      }
+      if (dg.readyState !== 'open') throw new Error('kps: datagram channel not open')
+      dg.send(bytesToArrayBuffer(data))
+    },
+    incoming
   }
 }
 
 export class Connection {
   readonly closed: Promise<ConnCloseInfo>
-  readonly datagrams: Datagrams = unsupportedDatagrams()
+  readonly datagrams: Datagrams
   state: 'connecting' | 'open' | 'closed' = 'connecting'
 
   #pc: RTCPeerConnection
@@ -55,6 +99,12 @@ export class Connection {
   private constructor(pc: RTCPeerConnection) {
     this.#pc = pc
     this.closed = new Promise<ConnCloseInfo>(res => { this.#closeResolve = res })
+
+    // Reserved datagram channel — negotiated on both sides, so it carries
+    // datagrams without DCEP and never surfaces as an application stream.
+    this.datagrams = makeDatagrams(pc.createDataChannel(DATAGRAM_LABEL, {
+      negotiated: true, id: DATAGRAM_ID, ordered: false, maxRetransmits: 0
+    }))
 
     pc.addEventListener('connectionstatechange', () => {
       const s = pc.connectionState
