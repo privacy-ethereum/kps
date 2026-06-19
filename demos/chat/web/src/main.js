@@ -317,27 +317,18 @@ if (savedAddrs.length > 0) {
 // ------- rpc -------
 
 async function openRpcStream() {
-  rpcStream = await conn.openStream(RPC_STREAM)
-  let rpcBuf = ''
-  rpcStream.addEventListener('message', (event) => {
-    rpcBuf += new TextDecoder().decode(event.data)
-    let idx
-    while ((idx = rpcBuf.indexOf('\n')) !== -1) {
-      const line = rpcBuf.slice(0, idx)
-      rpcBuf = rpcBuf.slice(idx + 1)
-      if (!line) continue
-      let resp
-      try { resp = JSON.parse(line) } catch { continue }
-      const idNum = typeof resp.id === 'number' ? resp.id : null
-      const pending = idNum != null ? pendingRpc.get(idNum) : null
-      if (!pending) continue
-      pendingRpc.delete(idNum)
-      clearTimeout(pending.timer)
-      if (resp.error) pending.reject(new Error(resp.error.message || 'rpc error'))
-      else pending.resolve(resp.result)
-    }
+  rpcStream = await openLineStream(conn, RPC_STREAM, (line) => {
+    let resp
+    try { resp = JSON.parse(line) } catch { return }
+    const idNum = typeof resp.id === 'number' ? resp.id : null
+    const pending = idNum != null ? pendingRpc.get(idNum) : null
+    if (!pending) return
+    pendingRpc.delete(idNum)
+    clearTimeout(pending.timer)
+    if (resp.error) pending.reject(new Error(resp.error.message || 'rpc error'))
+    else pending.resolve(resp.result)
   })
-  rpcStream.addEventListener('close', () => {
+  rpcStream.stream.closed.then(() => {
     for (const p of pendingRpc.values()) {
       clearTimeout(p.timer)
       p.reject(new Error('rpc stream closed'))
@@ -351,7 +342,7 @@ async function rpc(network, method, params = []) {
   if (!rpcStream) throw new Error('rpc not connected')
   const id = nextRpcId++
   const envelope = { network, req: { jsonrpc: '2.0', id, method, params } }
-  if (!rpcStream.send(JSON.stringify(envelope) + '\n')) await rpcStream.drain()
+  await rpcStream.send(envelope)
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       if (pendingRpc.has(id)) {
@@ -871,9 +862,45 @@ function selectConvo(key) {
 
 // ------- transport -------
 
+// KPS streams are unnamed; the demo routes by writing a one-line protocol
+// selector first ("chat" / "eth-rpc"), then newline-delimited JSON. Returns a
+// small wrapper: send(obj) writes one JSON line; the read loop calls onLine.
+async function openLineStream(conn, selector, onLine) {
+  const stream = await conn.openStream()
+  const writer = stream.writable.getWriter()
+  const enc = new TextEncoder()
+  await writer.write(enc.encode(selector + '\n'))
+  ;(async () => {
+    const reader = stream.readable.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    try {
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        let idx
+        while ((idx = buf.indexOf('\n')) !== -1) {
+          const line = buf.slice(0, idx)
+          buf = buf.slice(idx + 1)
+          if (line) onLine(line)
+        }
+      }
+    } catch { /* stream ended or reset */ }
+  })()
+  return {
+    stream,
+    async send(obj) { await writer.write(enc.encode(JSON.stringify(obj) + '\n')) },
+    async close() {
+      try { await writer.close() } catch {}
+      try { await stream.close() } catch {}
+    }
+  }
+}
+
 async function sendServer(obj) {
   if (!chatStream) throw new Error('not connected')
-  if (!chatStream.send(JSON.stringify(obj) + '\n')) await chatStream.drain()
+  await chatStream.send(obj)
 }
 
 async function handleServerMessage(obj) {
@@ -963,21 +990,7 @@ function markDeliveryStatus(id, status) {
   }
 }
 
-function attachChatReader() {
-  let buf = ''
-  chatStream.addEventListener('message', (event) => {
-    buf += new TextDecoder().decode(event.data)
-    let idx
-    while ((idx = buf.indexOf('\n')) !== -1) {
-      const line = buf.slice(0, idx)
-      buf = buf.slice(idx + 1)
-      if (!line) continue
-      let obj
-      try { obj = JSON.parse(line) } catch { continue }
-      handleServerMessage(obj).catch(err => console.error('server msg:', err))
-    }
-  })
-}
+// Chat reads are handled by openLineStream's onLine callback (see doConnect).
 
 // ------- lifecycle -------
 
@@ -1110,14 +1123,17 @@ async function doConnect() {
     await generateDmKeyPair()
 
     conn = await dial(value, { timeoutMs: 15_000 })
-    conn.addEventListener('close', () => {
+    conn.closed.then(() => {
       setStatus('', 'disconnected')
       cleanup()
     })
 
-    chatStream = await conn.openStream(CHAT_STREAM)
-    attachChatReader()
-    chatStream.closed.then(() => { chatStream = null })
+    chatStream = await openLineStream(conn, CHAT_STREAM, (line) => {
+      let obj
+      try { obj = JSON.parse(line) } catch { return }
+      handleServerMessage(obj).catch(err => console.error('server msg:', err))
+    })
+    chatStream.stream.closed.then(() => { chatStream = null })
 
     try { await openRpcStream() } catch (err) {
       console.warn(`rpc stream failed to open: ${err.message}`)

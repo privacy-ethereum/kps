@@ -15,18 +15,33 @@
       setStatus('dialing')
       const conn = await dial(addr)
       setStatus('connected')
-      const stream = await conn.openStream('echo')
+      const stream = await conn.openStream()
       setStatus('stream-open')
 
       const text = `hello-${Date.now()}`
-      stream.send(text)
-      const it = stream[Symbol.asyncIterator]()
-      const { value: buf } = await it.next()
-      const echoed = new TextDecoder().decode(buf)
+
+      // Write the bytes and finish our write half so the echo server's io.Copy
+      // sees EOF, mirrors the bytes back, and then closes its own write half.
+      const writer = stream.writable.getWriter()
+      await writer.write(new TextEncoder().encode(text))
+      await writer.close()
+
+      // Read echoed bytes until the server closes its write half (EOF).
+      const reader = stream.readable.getReader()
+      const chunks = []
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) break
+        if (value) chunks.push(value)
+      }
+      const total = chunks.reduce((n, c) => n + c.length, 0)
+      const merged = new Uint8Array(total)
+      let off = 0
+      for (const c of chunks) { merged.set(c, off); off += c.length }
+      const echoed = new TextDecoder().decode(merged)
       resultEl.textContent = echoed
       setStatus('done')
 
-      await stream.close()
       await conn.close()
       return echoed === text
     }

@@ -1,113 +1,167 @@
-// Stream — a single logical message stream over a kps connection.
-// Wraps an RTCDataChannel. Message-oriented: every `send(data)` produces
-// exactly one `'message'` event on the peer side.
+// Stream — an unnamed, bidirectional, reliable, ordered byte stream over a kps
+// connection (SPEC §6). Byte-oriented: no message boundaries. Inbound/outbound
+// bytes are exposed as WHATWG ReadableStream/WritableStream; the §6.2 framing
+// (DATA/FIN/RESET/STOP_SENDING) over the data channel is internal.
 
-const BUFFERED_AMOUNT_LOW_THRESHOLD = 1 << 20 // 1 MiB
+import {
+  decodeFrame, encodeData, encodeFin, encodeCode,
+  codeToNum, numToCode,
+  FRAME_DATA, FRAME_FIN, FRAME_RESET, FRAME_STOP_SENDING,
+  MAX_FRAME_PAYLOAD, type KpsErrorCode, type KpsReason
+} from './framing.js'
 
-export interface CloseInfo {
-  reason: 'local' | 'remote' | 'error'
-  error?: Error
+const BUFFERED_AMOUNT_LOW = 1 << 20 // 1 MiB
+
+export interface StreamCloseInfo {
+  ok: boolean
+  reason?: KpsReason
 }
 
-export class Stream extends EventTarget {
-  readonly name: string
-  readonly closed: Promise<CloseInfo>
+function streamError(reason: KpsReason): Error {
+  const e = new Error(reason.message ?? `kps: stream ${reason.code ?? 'reset'}`)
+  ;(e as unknown as { code?: KpsErrorCode }).code = reason.code
+  return e
+}
+
+function reasonFrom(x: unknown): KpsReason | undefined {
+  if (x == null) return undefined
+  if (typeof x === 'object' && ('code' in x || 'message' in x)) return x as KpsReason
+  return { message: String((x as { message?: unknown })?.message ?? x) }
+}
+
+// RTCDataChannel.send wants an ArrayBuffer-backed view; copy to a fresh,
+// exactly-sized ArrayBuffer (also detaches from any SharedArrayBuffer typing).
+function toArrayBuffer(u8: Uint8Array): ArrayBuffer {
+  return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer
+}
+
+export class Stream {
+  readonly readable: ReadableStream<Uint8Array>
+  readonly writable: WritableStream<Uint8Array>
+  readonly closed: Promise<StreamCloseInfo>
 
   #channel: RTCDataChannel
-  #closeResolve!: (info: CloseInfo) => void
-  #closeFired = false
-  #queue: Uint8Array[] = []
-  #waiters: Array<(v: IteratorResult<Uint8Array>) => void> = []
-  #queueClosed = false
+  #rc: ReadableStreamDefaultController<Uint8Array> | null = null
+  #readEnded = false
+  #writeClosed = false
+  #peerStop: KpsReason | null = null
+  #closeResolve!: (info: StreamCloseInfo) => void
+  #closeSettled = false
 
   constructor(channel: RTCDataChannel) {
-    super()
     this.#channel = channel
     channel.binaryType = 'arraybuffer'
-    channel.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW_THRESHOLD
-    this.name = channel.label
+    channel.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW
 
-    this.closed = new Promise<CloseInfo>(res => { this.#closeResolve = res })
+    this.closed = new Promise<StreamCloseInfo>(res => { this.#closeResolve = res })
 
-    channel.addEventListener('message', e => {
-      const data = e.data as ArrayBuffer | string
-      const buf = typeof data === 'string'
-        ? new TextEncoder().encode(data)
-        : new Uint8Array(data)
-      this.#enqueue(buf)
-      this.dispatchEvent(new MessageEvent('message', { data: buf }))
+    this.readable = new ReadableStream<Uint8Array>({
+      start: (controller) => { this.#rc = controller },
+      cancel: (reason) => { void this.cancelRead(reasonFrom(reason) ?? { code: 'cancelled' }) }
     })
-    channel.addEventListener('close', () => {
-      this.#fireClose({ reason: 'remote' })
+
+    this.writable = new WritableStream<Uint8Array>({
+      write: (chunk) => this.#writeChunk(chunk),
+      close: () => this.closeWrite(),
+      abort: (reason) => this.resetWrite(reasonFrom(reason) ?? { code: 'reset' })
     })
-    channel.addEventListener('error', (e: Event) => {
-      const err = (e as RTCErrorEvent).error ?? new Error('kps stream error')
-      this.dispatchEvent(new ErrorEvent('error', { error: err, message: err.message }))
-      this.#fireClose({ reason: 'error', error: err })
+
+    channel.addEventListener('message', (e) => this.#onMessage(e as MessageEvent))
+    channel.addEventListener('close', () => this.#settle({ ok: true }))
+    channel.addEventListener('error', (e) => {
+      const err = (e as RTCErrorEvent).error
+      this.#settle({ ok: false, reason: { code: 'network-error', message: err?.message } })
     })
   }
 
-  send(data: Uint8Array | string): boolean {
-    if (this.#channel.readyState !== 'open') {
-      throw new Error(`kps: cannot send on stream '${this.name}' in state ${this.#channel.readyState}`)
+  #onMessage(e: MessageEvent): void {
+    const raw = e.data as ArrayBuffer | string
+    const data = typeof raw === 'string' ? new TextEncoder().encode(raw) : new Uint8Array(raw)
+    if (data.length === 0) return
+    const f = decodeFrame(data)
+    switch (f.type) {
+      case FRAME_DATA:
+        if (!this.#readEnded && this.#rc) {
+          try { this.#rc.enqueue(f.payload.slice()) } catch { /* reader gone */ }
+        }
+        break
+      case FRAME_FIN:
+        this.#endRead(null)
+        break
+      case FRAME_RESET:
+        this.#endRead({ code: numToCode(f.code) ?? 'reset' })
+        break
+      case FRAME_STOP_SENDING:
+        this.#peerStop = { code: numToCode(f.code) ?? 'cancelled' }
+        this.#writeClosed = true
+        break
     }
-    if (typeof data === 'string') this.#channel.send(data)
-    else this.#channel.send(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer)
-    return this.#channel.bufferedAmount < BUFFERED_AMOUNT_LOW_THRESHOLD
   }
 
-  drain(): Promise<void> {
-    if (this.#channel.bufferedAmount < BUFFERED_AMOUNT_LOW_THRESHOLD) return Promise.resolve()
+  #endRead(reason: KpsReason | null): void {
+    if (this.#readEnded) return
+    this.#readEnded = true
+    if (this.#rc) {
+      try {
+        if (reason) this.#rc.error(streamError(reason))
+        else this.#rc.close()
+      } catch { /* already closed */ }
+    }
+  }
+
+  async #writeChunk(chunk: Uint8Array): Promise<void> {
+    if (this.#peerStop) throw streamError(this.#peerStop)
+    for (let off = 0; off < chunk.length; off += MAX_FRAME_PAYLOAD) {
+      if (this.#channel.readyState !== 'open') throw new Error(`kps: stream is ${this.#channel.readyState}`)
+      if (this.#peerStop) throw streamError(this.#peerStop)
+      if (this.#channel.bufferedAmount >= BUFFERED_AMOUNT_LOW) await this.#drain()
+      this.#channel.send(toArrayBuffer(encodeData(chunk.subarray(off, off + MAX_FRAME_PAYLOAD))))
+    }
+  }
+
+  #drain(): Promise<void> {
+    if (this.#channel.bufferedAmount < BUFFERED_AMOUNT_LOW) return Promise.resolve()
     return new Promise(resolve => {
-      const onLow = () => {
-        this.#channel.removeEventListener('bufferedamountlow', onLow)
-        resolve()
-      }
+      const onLow = () => { this.#channel.removeEventListener('bufferedamountlow', onLow); resolve() }
       this.#channel.addEventListener('bufferedamountlow', onLow)
     })
   }
 
-  async close(): Promise<void> {
-    if (this.#channel.readyState === 'closed' || this.#channel.readyState === 'closing') {
-      await this.closed
-      return
-    }
-    this.#channel.close()
-    this.#fireClose({ reason: 'local' })
-    await this.closed
+  /** Gracefully finish the local write half; the peer observes EOF after all written bytes. */
+  async closeWrite(): Promise<void> {
+    if (this.#writeClosed) return
+    this.#writeClosed = true
+    if (this.#channel.readyState === 'open') this.#channel.send(toArrayBuffer(encodeFin()))
   }
 
-  [Symbol.asyncIterator](): AsyncIterator<Uint8Array> {
-    return {
-      next: (): Promise<IteratorResult<Uint8Array>> => {
-        if (this.#queue.length) {
-          return Promise.resolve({ value: this.#queue.shift()!, done: false })
-        }
-        if (this.#queueClosed) {
-          return Promise.resolve({ value: undefined as never, done: true })
-        }
-        return new Promise(res => this.#waiters.push(res))
-      },
-      return: (): Promise<IteratorResult<Uint8Array>> => {
-        this.#queueClosed = true
-        return Promise.resolve({ value: undefined as never, done: true })
-      }
+  /** Stop wanting inbound bytes (not EOF); the peer is told to stop sending. */
+  async cancelRead(reason?: KpsReason): Promise<void> {
+    if (this.#channel.readyState === 'open') {
+      this.#channel.send(toArrayBuffer(encodeCode(FRAME_STOP_SENDING, codeToNum(reason?.code ?? 'cancelled'))))
+    }
+    this.#endRead(null)
+  }
+
+  /** Abort the local write half; the peer observes a stream error rather than EOF. */
+  async resetWrite(reason?: KpsReason): Promise<void> {
+    if (this.#writeClosed) return
+    this.#writeClosed = true
+    if (this.#channel.readyState === 'open') {
+      this.#channel.send(toArrayBuffer(encodeCode(FRAME_RESET, codeToNum(reason?.code ?? 'reset'))))
     }
   }
 
-  #enqueue(buf: Uint8Array): void {
-    const w = this.#waiters.shift()
-    if (w) w({ value: buf, done: false })
-    else this.#queue.push(buf)
+  /** Tear down both halves of the stream. */
+  async close(reason?: KpsReason): Promise<void> {
+    try { await this.closeWrite() } catch { /* ignore */ }
+    try { await this.cancelRead(reason ?? { code: 'closed' }) } catch { /* ignore */ }
+    try { this.#channel.close() } catch { /* ignore */ }
   }
 
-  #fireClose(info: CloseInfo): void {
-    if (this.#closeFired) return
-    this.#closeFired = true
-    this.#queueClosed = true
-    for (const w of this.#waiters) w({ value: undefined as never, done: true })
-    this.#waiters = []
+  #settle(info: StreamCloseInfo): void {
+    this.#endRead(info.ok ? null : info.reason ?? { code: 'network-error' })
+    if (this.#closeSettled) return
+    this.#closeSettled = true
     this.#closeResolve(info)
-    this.dispatchEvent(new Event('close'))
   }
 }

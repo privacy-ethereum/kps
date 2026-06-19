@@ -1,14 +1,12 @@
 // SDP synthesis for kps over WebRTC.
 //
 // The browser creates a real local offer via RTCPeerConnection.createOffer(),
-// then feeds it a fabricated "answer" describing the server. The server
-// never exchanges SDP — it learns the connection's ufrag from the first
-// inbound STUN binding's USERNAME attribute and uses that ufrag as the ICE
-// password too (the kps convention, inherited from libp2p webrtc-direct).
-//
-// So: the synthesized answer must claim ice-ufrag = ice-pwd = the same
-// ufrag the browser already chose for its local offer. We extract that
-// ufrag from the local SDP and reuse it.
+// then feeds it a fabricated "answer" describing the server. The server never
+// exchanges SDP — it learns the connection's ufrag from the first inbound STUN
+// binding's USERNAME attribute and derives the ICE password from the pinned
+// certhash (SPEC §5.2). Both ends compute the same password; it is never on the
+// wire, which removes the libp2p `ufrag == pwd` fingerprint and gates DTLS
+// behind certhash possession.
 
 import { decodeCerthash, digestToSdpFingerprint } from './certhash.js'
 import type { Address } from './address.js'
@@ -19,33 +17,45 @@ export function extractUfragFromLocalOffer(sdp: string): string {
   return m[1]
 }
 
-// Replace the offer's ICE ufrag/pwd with values we control. Browsers
-// auto-generate a 4-char ufrag and a separate 22+ char pwd; we need
-// ufrag to also be long enough to use as pwd (the kps convention has
-// pwd = ufrag so the server can derive both from the STUN USERNAME it
-// observes).
+// A random connection-demux ufrag of normal WebRTC length (~72 bits). It no
+// longer doubles as the password, so it need not be pwd-length.
 export function generateUfrag(): string {
-  const bytes = new Uint8Array(18)
+  const bytes = new Uint8Array(9)
   crypto.getRandomValues(bytes)
-  // base64url, no padding — yields 24 chars from 18 bytes.
   let bin = ''
   for (const b of bytes) bin += String.fromCharCode(b)
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
-export function rewriteOfferUfrag(sdp: string, ufrag: string): string {
+// deriveICEPwd computes the ICE password from the pinned certhash digest and the
+// ufrag (SPEC §5.2). HMAC-SHA256, base64 standard alphabet, no padding (within
+// the ICE ice-char set). Identical to the Go server's deriveICEPwd.
+export async function deriveICEPwd(certhashDigest: Uint8Array, ufrag: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw', toArrayBuffer(certhashDigest), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  )
+  const msg = new TextEncoder().encode('kps-ice-pwd-v1:' + ufrag)
+  const sig = new Uint8Array(await crypto.subtle.sign('HMAC', key, toArrayBuffer(msg)))
+  let bin = ''
+  for (const b of sig) bin += String.fromCharCode(b)
+  return btoa(bin).replace(/=+$/, '')
+}
+
+function toArrayBuffer(u8: Uint8Array): ArrayBuffer {
+  return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer
+}
+
+export function rewriteOfferUfrag(sdp: string, ufrag: string, pwd: string): string {
   const lines = sdp.split(/\r\n|\n/).map(line => {
     if (line.startsWith('a=ice-ufrag:')) return `a=ice-ufrag:${ufrag}`
-    if (line.startsWith('a=ice-pwd:')) return `a=ice-pwd:${ufrag}`
+    if (line.startsWith('a=ice-pwd:')) return `a=ice-pwd:${pwd}`
     return line
   })
   return lines.join('\r\n')
 }
 
-export function synthesizeAnswer(addr: Address, ufrag: string): string {
+export function synthesizeAnswer(addr: Address, ufrag: string, pwd: string): string {
   const fingerprint = digestToSdpFingerprint(decodeCerthash(addr.certhash))
-  // Order matters in SDP. WebRTC implementations are forgiving about some
-  // attribute orderings within the m= section, but keep the canonical layout.
   const lines = [
     'v=0',
     'o=- 0 0 IN IP4 0.0.0.0',
@@ -56,13 +66,12 @@ export function synthesizeAnswer(addr: Address, ufrag: string): string {
     `c=IN IP4 ${addr.ip}`,
     'a=mid:0',
     `a=ice-ufrag:${ufrag}`,
-    `a=ice-pwd:${ufrag}`,
+    `a=ice-pwd:${pwd}`,
     `a=fingerprint:sha-256 ${fingerprint}`,
     'a=setup:passive',
     'a=sctp-port:5000',
     'a=max-message-size:1048576',
     `a=candidate:1 1 UDP 1 ${addr.ip} ${addr.port} typ host`
   ]
-  // SDP must end with CRLF after the last line.
   return lines.join('\r\n') + '\r\n'
 }

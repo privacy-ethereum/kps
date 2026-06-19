@@ -28,24 +28,36 @@ func main() {
 	}
 	defer listener.Close()
 
-	listener.Handle("echo", func(s *kps.Stream) {
-		log.Printf("[echo] new stream")
+	go func() {
 		for {
-			buf, err := s.Recv()
+			conn, err := listener.Accept(ctx)
 			if err != nil {
-				if err != io.EOF {
-					log.Printf("[echo] recv: %v", err)
-				}
 				return
 			}
-			if err := s.Send(buf); err != nil {
-				log.Printf("[echo] send: %v", err)
-				return
-			}
+			go handleConn(ctx, conn)
 		}
-	})
+	}()
 
 	fmt.Printf("listening; dial with kps.dial(\"%s\")\n", listener.Address(*ipFlag))
 
 	<-ctx.Done()
+}
+
+// handleConn echoes every stream the peer opens: it copies the stream's bytes
+// straight back until the peer finishes its write half (EOF).
+func handleConn(ctx context.Context, conn *kps.Conn) {
+	for {
+		s, err := conn.AcceptStream(ctx)
+		if err != nil {
+			return
+		}
+		go func() {
+			log.Printf("[echo] new stream")
+			if _, err := io.Copy(s, s); err != nil {
+				log.Printf("[echo] copy: %v", err)
+			}
+			_ = s.CloseWrite()
+			_ = s.Close()
+		}()
+	}
 }

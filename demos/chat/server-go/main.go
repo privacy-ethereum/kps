@@ -11,6 +11,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/ed25519"
@@ -198,7 +199,8 @@ func sendObj(p *peerEntry, obj any) error {
 	b = append(b, '\n')
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.stream.Send(b)
+	_, err = p.stream.Write(b)
+	return err
 }
 
 func rosterSnapshot() []rosterMember {
@@ -284,6 +286,40 @@ func forward(targetPeerID string, msg any) bool {
 
 // ---- handlers ----
 
+// handleConn accepts the connection's streams and routes each one. KPS streams
+// are unnamed, so the application does its own routing: a stream's first line
+// is a protocol selector ("chat" or "eth-rpc"); the rest is that protocol's
+// newline-delimited JSON.
+func handleConn(conn *kps.Conn) {
+	for {
+		stream, err := conn.AcceptStream(context.Background())
+		if err != nil {
+			return
+		}
+		go routeStream(stream)
+	}
+}
+
+func routeStream(stream *kps.Stream) {
+	if err := stream.WaitOpen(); err != nil {
+		return
+	}
+	r := bufio.NewReader(stream)
+	sel, err := r.ReadBytes('\n')
+	if err != nil {
+		_ = stream.Close()
+		return
+	}
+	switch string(bytes.TrimSpace(sel)) {
+	case "chat":
+		chatHandler(stream, r)
+	case "eth-rpc":
+		rpcHandler(stream, r)
+	default:
+		_ = stream.Close()
+	}
+}
+
 const dmSigDomain = "kps-webrtc-dm-key-v1:"
 
 func verifyDMSignature(idPubB64, dmPubB64, sigB64 string) bool {
@@ -303,11 +339,7 @@ func verifyDMSignature(idPubB64, dmPubB64, sigB64 string) bool {
 	return ed25519.Verify(ed25519.PublicKey(idPub), payload, sig)
 }
 
-func chatHandler(stream *kps.Stream) {
-	if err := stream.WaitOpen(); err != nil {
-		return
-	}
-
+func chatHandler(stream *kps.Stream, r *bufio.Reader) {
 	var entry *peerEntry
 	var peerID string
 	defer func() {
@@ -325,13 +357,11 @@ func chatHandler(stream *kps.Stream) {
 	}()
 
 	for {
-		buf, err := stream.Recv()
+		// Byte stream: read one newline-delimited JSON message at a time.
+		buf, err := r.ReadBytes('\n')
 		if err != nil {
 			return
 		}
-		// kps streams are message-oriented but the demo wire format is
-		// line-delimited JSON for parity with the libp2p version. Each
-		// message is treated as a chunk and we still split by newline.
 		lines := bytes.Split(buf, []byte{'\n'})
 		for _, line := range lines {
 			line = bytes.TrimSpace(line)
@@ -444,10 +474,7 @@ func chatHandler(stream *kps.Stream) {
 	}
 }
 
-func rpcHandler(stream *kps.Stream) {
-	if err := stream.WaitOpen(); err != nil {
-		return
-	}
+func rpcHandler(stream *kps.Stream, r *bufio.Reader) {
 	tag := "?"
 	log.Printf("[rpc+] %s", tag)
 	defer log.Printf("[rpc-] %s", tag)
@@ -462,7 +489,7 @@ func rpcHandler(stream *kps.Stream) {
 		b = append(b, '\n')
 		sendMu.Lock()
 		defer sendMu.Unlock()
-		if err := stream.Send(b); err != nil {
+		if _, err := stream.Write(b); err != nil {
 			log.Printf("[rpc] send (%d bytes): %v", len(b), err)
 		}
 	}
@@ -471,7 +498,7 @@ func rpcHandler(stream *kps.Stream) {
 	defer pending.Wait()
 
 	for {
-		buf, err := stream.Recv()
+		buf, err := r.ReadBytes('\n')
 		if err != nil {
 			return
 		}
@@ -522,7 +549,7 @@ func rpcHandler(stream *kps.Stream) {
 				// resp already shaped as a JSON-RPC response; forward verbatim.
 				out := append(resp, '\n')
 				sendMu.Lock()
-				err = stream.Send(out)
+				_, err = stream.Write(out)
 				sendMu.Unlock()
 				if err != nil {
 					log.Printf("[rpc] send response (%d bytes, network=%s): %v", len(out), network, err)
@@ -638,8 +665,15 @@ func main() {
 		}
 	}
 
-	listener.Handle("chat", chatHandler)
-	listener.Handle("eth-rpc", rpcHandler)
+	go func() {
+		for {
+			conn, err := listener.Accept(ctx)
+			if err != nil {
+				return
+			}
+			go handleConn(conn)
+		}
+	}()
 
 	addr := listener.Address(*ipFlag)
 	fmt.Printf("listening; dial from the browser:\n  %s\n", addr)

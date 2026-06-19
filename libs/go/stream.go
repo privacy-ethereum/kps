@@ -2,117 +2,261 @@ package kps
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 
 	"github.com/pion/webrtc/v4"
 )
 
-// Stream is a single message-oriented logical stream over a kps
-// connection. Each Send produces one message on the peer.
+// writeBufferLowThreshold is the SCTP send-buffer level at which a blocked
+// Write resumes; Write applies backpressure above it.
+const writeBufferLowThreshold = 1 << 20 // 1 MiB
+
+var (
+	errWriteClosed  = errors.New("kps: write half closed")
+	errStreamClosed = errors.New("kps: stream closed")
+)
+
+// StreamError is the error surfaced to the read side when the peer aborts its
+// write half (RESET), or to the write side when the peer cancels its read
+// (STOP_SENDING). Callers can inspect Code (SPEC §9.1).
+type StreamError struct {
+	Code ErrorCode
+	// Remote is true when the code originated from the peer.
+	Remote bool
+}
+
+func (e *StreamError) Error() string {
+	return fmt.Sprintf("kps: stream reset (code %d)", e.Code)
+}
+
+// Stream is an unnamed, bidirectional, reliable, ordered byte stream over a kps
+// connection (SPEC §6). It implements io.Reader, io.Writer and io.Closer; it
+// carries no message boundaries. The underlying data-channel label is a
+// non-semantic implementation detail.
 type Stream struct {
 	dc *webrtc.DataChannel
 
-	openCh chan struct{}
-	openOnce sync.Once
+	mu    sync.Mutex
+	rcond *sync.Cond // read-side state changes
+	wcond *sync.Cond // write-side backpressure relief
 
-	mu      sync.Mutex
-	queue   [][]byte
-	waiters []chan []byte
-	closed  bool
+	inbuf       []byte
+	readEOF     bool  // peer FIN observed
+	readErr     error // peer RESET observed (*StreamError)
+	readCancel  bool  // local CancelRead
+	writeClosed bool  // local CloseWrite/ResetWrite/Close
+	peerStop    error // peer STOP_SENDING observed (*StreamError)
+	dcClosed    bool
+
+	openCh   chan struct{}
+	openOnce sync.Once
 }
 
 func newStream(dc *webrtc.DataChannel) *Stream {
-	s := &Stream{
-		dc:     dc,
-		openCh: make(chan struct{}),
-	}
+	s := &Stream{dc: dc, openCh: make(chan struct{})}
+	s.rcond = sync.NewCond(&s.mu)
+	s.wcond = sync.NewCond(&s.mu)
+
+	dc.SetBufferedAmountLowThreshold(writeBufferLowThreshold)
+	dc.OnBufferedAmountLow(func() {
+		s.mu.Lock()
+		s.wcond.Broadcast()
+		s.mu.Unlock()
+	})
 	if dc.ReadyState() == webrtc.DataChannelStateOpen {
 		s.openOnce.Do(func() { close(s.openCh) })
 	}
-	dc.OnOpen(func() {
-		s.openOnce.Do(func() { close(s.openCh) })
-	})
-	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-		buf := append([]byte(nil), msg.Data...)
-		s.mu.Lock()
-		if len(s.waiters) > 0 {
-			w := s.waiters[0]
-			s.waiters = s.waiters[1:]
-			s.mu.Unlock()
-			w <- buf
-			return
-		}
-		s.queue = append(s.queue, buf)
-		s.mu.Unlock()
-	})
+	dc.OnOpen(func() { s.openOnce.Do(func() { close(s.openCh) }) })
+	dc.OnMessage(func(msg webrtc.DataChannelMessage) { s.onFrame(msg.Data) })
 	dc.OnClose(func() {
 		s.mu.Lock()
-		s.closed = true
-		waiters := s.waiters
-		s.waiters = nil
-		s.mu.Unlock()
-		for _, w := range waiters {
-			close(w)
+		s.dcClosed = true
+		if !s.readEOF && s.readErr == nil {
+			s.readEOF = true // unexpected close reads as EOF
 		}
+		s.openOnce.Do(func() { close(s.openCh) })
+		s.rcond.Broadcast()
+		s.wcond.Broadcast()
+		s.mu.Unlock()
 	})
 	return s
 }
 
-// Name returns the stream's protocol name (the data channel label).
-func (s *Stream) Name() string { return s.dc.Label() }
+func (s *Stream) onFrame(data []byte) {
+	if len(data) == 0 {
+		return
+	}
+	t := frameType(data[0])
+	payload := data[1:]
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch t {
+	case frameData:
+		if s.readCancel || s.readEOF || s.readErr != nil {
+			return // dropping inbound after cancel/EOF/reset
+		}
+		s.inbuf = append(s.inbuf, payload...)
+		s.rcond.Broadcast()
+	case frameFin:
+		s.readEOF = true
+		s.rcond.Broadcast()
+	case frameReset:
+		if s.readErr == nil {
+			s.readErr = &StreamError{Code: decodeCode(payload), Remote: true}
+		}
+		s.rcond.Broadcast()
+	case frameStopSending:
+		if s.peerStop == nil {
+			s.peerStop = &StreamError{Code: decodeCode(payload), Remote: true}
+		}
+		s.writeClosed = true
+		s.wcond.Broadcast()
+	}
+}
 
 // WaitOpen blocks until the data channel is open or the stream is closed.
 func (s *Stream) WaitOpen() error {
 	<-s.openCh
 	if s.dc.ReadyState() != webrtc.DataChannelStateOpen {
-		return errors.New("kps: stream closed before open")
+		return errStreamClosed
 	}
 	return nil
 }
 
-// Send writes one message. Each call delivers exactly one message on the peer.
-func (s *Stream) Send(p []byte) error {
-	if s.dc.ReadyState() != webrtc.DataChannelStateOpen {
-		return errors.New("kps: stream not open")
+// Read fills p with inbound bytes, blocking until some are available. It
+// returns io.EOF after the peer's CloseWrite and all bytes are consumed, or a
+// *StreamError if the peer reset its write half.
+func (s *Stream) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
 	}
-	return s.dc.Send(p)
-}
-
-// SendString writes one string message.
-func (s *Stream) SendString(p string) error {
-	if s.dc.ReadyState() != webrtc.DataChannelStateOpen {
-		return errors.New("kps: stream not open")
-	}
-	return s.dc.SendText(p)
-}
-
-// Recv blocks until the next inbound message. Returns io.EOF when the
-// stream closes with no more buffered messages.
-func (s *Stream) Recv() ([]byte, error) {
 	s.mu.Lock()
-	if len(s.queue) > 0 {
-		buf := s.queue[0]
-		s.queue = s.queue[1:]
-		s.mu.Unlock()
-		return buf, nil
+	defer s.mu.Unlock()
+	for {
+		if len(s.inbuf) > 0 {
+			n := copy(p, s.inbuf)
+			s.inbuf = s.inbuf[n:]
+			return n, nil
+		}
+		if s.readCancel {
+			return 0, errStreamClosed
+		}
+		if s.readErr != nil {
+			return 0, s.readErr
+		}
+		if s.readEOF {
+			return 0, io.EOF
+		}
+		s.rcond.Wait()
 	}
-	if s.closed {
-		s.mu.Unlock()
-		return nil, io.EOF
-	}
-	w := make(chan []byte, 1)
-	s.waiters = append(s.waiters, w)
-	s.mu.Unlock()
-
-	buf, ok := <-w
-	if !ok {
-		return nil, io.EOF
-	}
-	return buf, nil
 }
 
-// Close closes the stream.
+// Write sends p as stream bytes, splitting into frames and applying backpressure
+// from the SCTP send buffer. It returns a *StreamError if the peer has cancelled
+// its read half (STOP_SENDING).
+func (s *Stream) Write(p []byte) (int, error) {
+	if err := s.WaitOpen(); err != nil {
+		return 0, err
+	}
+	written := 0
+	for len(p) > 0 {
+		chunk := p
+		if len(chunk) > maxFramePayload {
+			chunk = chunk[:maxFramePayload]
+		}
+		if err := s.writeFrame(encodeData(chunk)); err != nil {
+			return written, err
+		}
+		written += len(chunk)
+		p = p[len(chunk):]
+	}
+	return written, nil
+}
+
+// writeFrame blocks for backpressure, then sends one frame.
+func (s *Stream) writeFrame(frame []byte) error {
+	s.mu.Lock()
+	for {
+		if s.peerStop != nil {
+			err := s.peerStop
+			s.mu.Unlock()
+			return err
+		}
+		if s.writeClosed {
+			s.mu.Unlock()
+			return errWriteClosed
+		}
+		if s.dcClosed {
+			s.mu.Unlock()
+			return errStreamClosed
+		}
+		if s.dc.BufferedAmount() < writeBufferLowThreshold {
+			break
+		}
+		s.wcond.Wait()
+	}
+	s.mu.Unlock()
+	return s.dc.Send(frame)
+}
+
+// CloseWrite gracefully finishes the local write half; the peer observes EOF
+// after all previously written bytes (SPEC §6.1).
+func (s *Stream) CloseWrite() error {
+	s.mu.Lock()
+	if s.writeClosed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.writeClosed = true
+	s.wcond.Broadcast()
+	s.mu.Unlock()
+	if err := s.WaitOpen(); err != nil {
+		return err
+	}
+	return s.dc.Send(encodeFin())
+}
+
+// CancelRead tells the peer we no longer want inbound bytes (STOP_SENDING). It
+// is cancellation, not graceful EOF.
+func (s *Stream) CancelRead(code ErrorCode) error {
+	s.mu.Lock()
+	if s.readCancel {
+		s.mu.Unlock()
+		return nil
+	}
+	s.readCancel = true
+	s.inbuf = nil
+	s.rcond.Broadcast()
+	s.mu.Unlock()
+	if err := s.WaitOpen(); err != nil {
+		return err
+	}
+	return s.dc.Send(encodeCode(frameStopSending, code))
+}
+
+// ResetWrite aborts the local write half; the peer observes a stream error
+// rather than EOF.
+func (s *Stream) ResetWrite(code ErrorCode) error {
+	s.mu.Lock()
+	if s.writeClosed {
+		s.mu.Unlock()
+		return nil
+	}
+	s.writeClosed = true
+	s.wcond.Broadcast()
+	s.mu.Unlock()
+	if err := s.WaitOpen(); err != nil {
+		return err
+	}
+	return s.dc.Send(encodeCode(frameReset, code))
+}
+
+// Close tears down both halves: it finishes the write half (if still open),
+// cancels the read half, and closes the underlying channel.
 func (s *Stream) Close() error {
+	_ = s.CloseWrite()
+	_ = s.CancelRead(CodeClosed)
 	return s.dc.Close()
 }

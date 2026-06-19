@@ -5,7 +5,6 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
@@ -22,6 +21,7 @@ import (
 type Identity struct {
 	Certificate webrtc.Certificate
 	Certhash    string // multibase 'u' + multihash sha256
+	digest      []byte // raw 32-byte sha-256 of the cert DER (certhash payload)
 }
 
 const certLifetime = 200 * 365 * 24 * time.Hour
@@ -152,9 +152,15 @@ func parseKeyPEM(data []byte, path string) (*ecdsa.PrivateKey, error) {
 func buildCert(priv *ecdsa.PrivateKey) (*webrtc.Certificate, error) {
 	notBefore := time.Now().Add(-1 * time.Hour)
 	notAfter := notBefore.Add(certLifetime)
+	// The certificate is observable in cleartext on the DTLS 1.2 wire, so it
+	// carries no KPS-identifying metadata: a random serial and an empty Subject
+	// (SPEC §3, SECURITY.md §3) — not a fixed serial of 1 and CN "kps".
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return nil, err
+	}
 	tmpl := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject:      pkix.Name{CommonName: "kps"},
+		SerialNumber: serial,
 		NotBefore:    notBefore,
 		NotAfter:     notAfter,
 		KeyUsage:     x509.KeyUsageDigitalSignature,
@@ -194,7 +200,7 @@ func identityFromCert(cert *webrtc.Certificate) (*Identity, error) {
 	mh := append([]byte{0x12, 0x20}, digest...)
 	certhash := "u" + base64.RawURLEncoding.EncodeToString(mh)
 
-	return &Identity{Certificate: *cert, Certhash: certhash}, nil
+	return &Identity{Certificate: *cert, Certhash: certhash, digest: digest}, nil
 }
 
 func hexColonsToBytes(s string) ([]byte, error) {

@@ -1,100 +1,108 @@
-// Connection — a kps session to a single server.
-// Holds an RTCPeerConnection and exposes openStream() / onstream / close.
+// Connection — a kps session to a single server (SPEC §4). Holds an
+// RTCPeerConnection and exposes openStream() / acceptStream() / close(). Streams
+// are unnamed; the data-channel label is a non-semantic implementation detail.
 
 import { parseAddress } from './address.js'
-import { generateUfrag, rewriteOfferUfrag, synthesizeAnswer } from './sdp.js'
-import { Stream, type CloseInfo } from './stream.js'
+import { decodeCerthash } from './certhash.js'
+import { generateUfrag, deriveICEPwd, rewriteOfferUfrag, synthesizeAnswer } from './sdp.js'
+import { Stream } from './stream.js'
+import type { KpsReason } from './framing.js'
 
 export interface DialOptions {
   signal?: AbortSignal
   timeoutMs?: number
 }
 
+export interface ConnCloseInfo {
+  ok: boolean
+  reason?: KpsReason
+}
+
+// Datagrams (SPEC §7) — capability gated. Always present; unsupported in v0 over
+// WebRTC, signalled by maxSize 0 and a send() that rejects.
+export interface Datagrams {
+  readonly maxSize: number
+  send(data: Uint8Array, opts?: { signal?: AbortSignal }): Promise<void>
+  readonly incoming: ReadableStream<Uint8Array>
+}
+
 const DEFAULT_TIMEOUT = 15_000
-// Fixed stream id for the bootstrap channel — declared on both sides as
-// `negotiated:true` so it doesn't surface as a server-side ondatachannel
-// event. Its only job is to ensure the offer SDP includes the application
-// m-line.
+// Bootstrap channel: negotiated on both sides (no DCEP), so it never surfaces as
+// a server-side stream. Its only job is to force the SCTP m-line into the offer.
 const BOOTSTRAP_LABEL = '_kps_bootstrap'
 const BOOTSTRAP_ID = 0
 
-export class Connection extends EventTarget {
-  readonly closed: Promise<CloseInfo>
+function unsupportedDatagrams(): Datagrams {
+  return {
+    maxSize: 0,
+    async send() { throw new Error('kps: datagrams not supported') },
+    incoming: new ReadableStream<Uint8Array>({ start(c) { c.close() } })
+  }
+}
+
+export class Connection {
+  readonly closed: Promise<ConnCloseInfo>
+  readonly datagrams: Datagrams = unsupportedDatagrams()
   state: 'connecting' | 'open' | 'closed' = 'connecting'
-  onstream: ((stream: Stream) => void) | null = null
 
   #pc: RTCPeerConnection
-  #closeResolve!: (info: CloseInfo) => void
+  #streamSeq = 0
+  #incoming: Stream[] = []
+  #acceptWaiters: Array<{ resolve: (s: Stream) => void; reject: (e: Error) => void }> = []
+  #closeResolve!: (info: ConnCloseInfo) => void
   #closeFired = false
 
   private constructor(pc: RTCPeerConnection) {
-    super()
     this.#pc = pc
-
-    this.closed = new Promise<CloseInfo>(res => { this.#closeResolve = res })
+    this.closed = new Promise<ConnCloseInfo>(res => { this.#closeResolve = res })
 
     pc.addEventListener('connectionstatechange', () => {
       const s = pc.connectionState
       if (s === 'connected' && this.state === 'connecting') {
         this.state = 'open'
-        this.dispatchEvent(new Event('open'))
       } else if (s === 'failed') {
-        this.#fireClose({ reason: 'error', error: new Error('kps: peer connection failed') })
+        this.#fireClose({ ok: false, reason: { code: 'network-error', message: 'peer connection failed' } })
       } else if (s === 'closed' || s === 'disconnected') {
-        this.#fireClose({ reason: this.state === 'connecting' ? 'error' : 'remote' })
+        this.#fireClose({ ok: this.state !== 'connecting' })
       }
     })
 
     pc.addEventListener('datachannel', (e: RTCDataChannelEvent) => {
       const channel = e.channel
-      // Bootstrap channel is negotiated:true on both sides, so it should
-      // not surface here. If it does (e.g. server didn't pre-allocate it),
-      // ignore it.
       if (channel.label === BOOTSTRAP_LABEL) return
-      const stream = new Stream(channel)
-      if (this.onstream) this.onstream(stream)
+      this.#enqueueIncoming(new Stream(channel))
     })
   }
 
   static async dial(addrStr: string, opts: DialOptions = {}): Promise<Connection> {
     const addr = parseAddress(addrStr)
+    const digest = decodeCerthash(addr.certhash)
     const pc = new RTCPeerConnection({})
 
-    // Pre-allocated bootstrap channel: forces the offer SDP to contain an
-    // application m-line so SCTP gets set up. negotiated:true means no DCEP
-    // exchange; the server doesn't need to mirror it.
+    // Pre-allocate the negotiated bootstrap channel so the offer carries the
+    // application m-line and SCTP comes up.
     pc.createDataChannel(BOOTSTRAP_LABEL, { negotiated: true, id: BOOTSTRAP_ID })
 
     const offer = await pc.createOffer()
     const ufrag = generateUfrag()
-    const rewrittenOffer = { type: offer.type, sdp: rewriteOfferUfrag(offer.sdp ?? '', ufrag) }
-    await pc.setLocalDescription(rewrittenOffer)
-    const answer = synthesizeAnswer(addr, ufrag)
-    await pc.setRemoteDescription({ type: 'answer', sdp: answer })
+    const pwd = await deriveICEPwd(digest, ufrag)
+    await pc.setLocalDescription({ type: offer.type, sdp: rewriteOfferUfrag(offer.sdp ?? '', ufrag, pwd) })
+    await pc.setRemoteDescription({ type: 'answer', sdp: synthesizeAnswer(addr, ufrag, pwd) })
 
     const conn = new Connection(pc)
     await conn.#waitForOpen(opts.timeoutMs ?? DEFAULT_TIMEOUT, opts.signal)
     return conn
   }
 
-  async openStream(name: string, opts: { signal?: AbortSignal } = {}): Promise<Stream> {
+  // Open a new unnamed bidirectional byte stream.
+  async openStream(opts: { signal?: AbortSignal } = {}): Promise<Stream> {
     if (this.state !== 'open') throw new Error(`kps: connection is ${this.state}`)
-    if (name === BOOTSTRAP_LABEL) throw new Error(`kps: '${BOOTSTRAP_LABEL}' is reserved`)
-    const channel = this.#pc.createDataChannel(name)
+    const label = `kps-${++this.#streamSeq}`
+    const channel = this.#pc.createDataChannel(label)
     return await new Promise<Stream>((resolve, reject) => {
-      const onAbort = () => {
-        cleanup()
-        try { channel.close() } catch {}
-        reject(new Error('kps: openStream aborted'))
-      }
-      const onOpen = () => {
-        cleanup()
-        resolve(new Stream(channel))
-      }
-      const onError = (e: Event) => {
-        cleanup()
-        reject((e as RTCErrorEvent).error ?? new Error('kps: openStream failed'))
-      }
+      const onAbort = () => { cleanup(); try { channel.close() } catch {} ; reject(new Error('kps: openStream aborted')) }
+      const onOpen = () => { cleanup(); resolve(new Stream(channel)) }
+      const onError = (e: Event) => { cleanup(); reject((e as RTCErrorEvent).error ?? new Error('kps: openStream failed')) }
       const cleanup = () => {
         channel.removeEventListener('open', onOpen)
         channel.removeEventListener('error', onError)
@@ -106,44 +114,71 @@ export class Connection extends EventTarget {
     })
   }
 
-  async close(): Promise<void> {
-    if (this.state === 'closed') return
-    this.#pc.close()
-    this.#fireClose({ reason: 'local' })
-  }
-
-  #waitForOpen(timeoutMs: number, signal?: AbortSignal): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        cleanup()
-        try { this.#pc.close() } catch {}
-        reject(new Error(`kps: dial timed out after ${timeoutMs}ms`))
-      }, timeoutMs)
-      const onOpen = () => { cleanup(); resolve() }
-      const onClose = () => { cleanup(); reject(new Error('kps: connection closed during dial')) }
+  // Accept the next stream opened by the peer (pull-based, symmetric with Go's
+  // AcceptStream).
+  acceptStream(opts: { signal?: AbortSignal } = {}): Promise<Stream> {
+    const ready = this.#incoming.shift()
+    if (ready) return Promise.resolve(ready)
+    if (this.state === 'closed') return Promise.reject(new Error('kps: connection is closed'))
+    const signal = opts.signal
+    return new Promise<Stream>((resolve, reject) => {
+      let waiter: { resolve: (s: Stream) => void; reject: (e: Error) => void }
       const onAbort = () => {
-        cleanup()
-        try { this.#pc.close() } catch {}
-        reject(new Error('kps: dial aborted'))
-      }
-      const cleanup = () => {
-        clearTimeout(timer)
-        this.removeEventListener('open', onOpen)
+        const i = this.#acceptWaiters.indexOf(waiter)
+        if (i >= 0) this.#acceptWaiters.splice(i, 1)
         signal?.removeEventListener('abort', onAbort)
-        this.closed.finally(() => {}).catch(() => {})
+        reject(new Error('kps: acceptStream aborted'))
       }
-      this.addEventListener('open', onOpen, { once: true })
-      this.closed.then(onClose)
+      waiter = {
+        resolve: (s: Stream) => { signal?.removeEventListener('abort', onAbort); resolve(s) },
+        reject: (e: Error) => { signal?.removeEventListener('abort', onAbort); reject(e) }
+      }
+      this.#acceptWaiters.push(waiter)
       signal?.addEventListener('abort', onAbort, { once: true })
     })
   }
 
-  #fireClose(info: CloseInfo): void {
+  async close(reason?: KpsReason): Promise<void> {
+    if (this.state === 'closed') return
+    this.#pc.close()
+    this.#fireClose({ ok: true, reason })
+  }
+
+  #enqueueIncoming(stream: Stream): void {
+    const w = this.#acceptWaiters.shift()
+    if (w) w.resolve(stream)
+    else this.#incoming.push(stream)
+  }
+
+  #waitForOpen(timeoutMs: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (this.state === 'open') return resolve()
+      const timer = setTimeout(() => {
+        cleanup(); try { this.#pc.close() } catch {}
+        reject(new Error(`kps: dial timed out after ${timeoutMs}ms`))
+      }, timeoutMs)
+      const onState = () => {
+        if (this.#pc.connectionState === 'connected') { cleanup(); resolve() }
+      }
+      const onAbort = () => { cleanup(); try { this.#pc.close() } catch {} ; reject(new Error('kps: dial aborted')) }
+      const cleanup = () => {
+        clearTimeout(timer)
+        this.#pc.removeEventListener('connectionstatechange', onState)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      this.#pc.addEventListener('connectionstatechange', onState)
+      this.closed.then(() => { cleanup(); reject(new Error('kps: connection closed during dial')) }).catch(() => {})
+      signal?.addEventListener('abort', onAbort, { once: true })
+    })
+  }
+
+  #fireClose(info: ConnCloseInfo): void {
     if (this.#closeFired) return
     this.#closeFired = true
     this.state = 'closed'
+    for (const w of this.#acceptWaiters) w.reject(new Error('kps: connection closed'))
+    this.#acceptWaiters = []
     this.#closeResolve(info)
-    this.dispatchEvent(new Event('close'))
   }
 }
 

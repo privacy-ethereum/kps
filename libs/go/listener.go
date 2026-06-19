@@ -24,16 +24,11 @@ type Listener struct {
 	byUfrag map[string]*pcEntry
 	byAddr  map[netip.AddrPort]*pcEntry
 
-	handlersMu sync.RWMutex
-	handlers   map[string]StreamHandler
+	acceptCh chan *Conn
 
 	closeOnce sync.Once
 	closed    chan struct{}
 }
-
-// StreamHandler runs in its own goroutine for each incoming stream
-// matching the registered protocol name.
-type StreamHandler func(*Stream)
 
 type Options struct {
 	// Identity, when set, is used directly. The Listener writes nothing
@@ -51,6 +46,7 @@ type pcEntry struct {
 	inbox chan packetIn
 	conn  *pcPacketConn
 	pc    *webrtc.PeerConnection
+	kc    *Conn
 }
 
 type packetIn struct {
@@ -88,7 +84,7 @@ func Listen(ctx context.Context, addr string, opts Options) (*Listener, error) {
 		udp:      udp,
 		byUfrag:  map[string]*pcEntry{},
 		byAddr:   map[netip.AddrPort]*pcEntry{},
-		handlers: map[string]StreamHandler{},
+		acceptCh: make(chan *Conn, 16),
 		closed:   make(chan struct{}),
 	}
 	go l.pump()
@@ -120,13 +116,18 @@ func (l *Listener) Certhash() string {
 	return l.identity.Certhash
 }
 
-// Handle registers a handler for streams opened with the given name.
-// The handler runs in its own goroutine. Replacing or registering
-// concurrently with active connections is safe.
-func (l *Listener) Handle(name string, handler StreamHandler) {
-	l.handlersMu.Lock()
-	defer l.handlersMu.Unlock()
-	l.handlers[name] = handler
+// Accept returns the next established connection, blocking until one arrives,
+// ctx is done, or the listener closes. Each Conn carries its own streams via
+// Conn.AcceptStream.
+func (l *Listener) Accept(ctx context.Context) (*Conn, error) {
+	select {
+	case c := <-l.acceptCh:
+		return c, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-l.closed:
+		return nil, net.ErrClosed
+	}
 }
 
 func (l *Listener) Close() error {
@@ -221,10 +222,11 @@ func (l *Listener) spawnPC(ufrag string) *pcEntry {
 	se.SetLite(true)
 	se.SetICEUDPMux(&singleConnMux{conn: pcc})
 	se.DisableCertificateFingerprintVerification(true)
-	// Pin the local ICE creds to the same value the browser saw in our
-	// synthesized answer SDP (kps convention: ufrag = pwd = the value
-	// the server learned from the inbound STUN binding's USERNAME).
-	se.SetICECredentials(ufrag, ufrag)
+	// Derive the ICE password from the pinned certhash (SPEC §5.2); the client
+	// computes the identical value, so only a certhash-holder passes STUN
+	// integrity. Pin our local creds to (ufrag, derived pwd).
+	pwd := deriveICEPwd(l.identity.digest, ufrag)
+	se.SetICECredentials(ufrag, pwd)
 
 	api := webrtc.NewAPI(webrtc.WithSettingEngine(se))
 	pc, err := api.NewPeerConnection(webrtc.Configuration{
@@ -234,29 +236,29 @@ func (l *Listener) spawnPC(ufrag string) *pcEntry {
 		return nil
 	}
 
-	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
-		l.handlersMu.RLock()
-		h, ok := l.handlers[dc.Label()]
-		l.handlersMu.RUnlock()
-		if !ok {
-			_ = dc.Close()
-			return
-		}
-		stream := newStream(dc)
-		go func() {
-			defer stream.Close()
-			h(stream)
-		}()
-	})
+	// newConn owns pc.OnDataChannel: each client-opened channel surfaces as a
+	// Stream on the Conn's accept queue. The negotiated bootstrap channel is
+	// not announced via DCEP, so it never appears here.
+	kc := newConn(pc)
 
+	var acceptOnce sync.Once
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		if s == webrtc.PeerConnectionStateClosed || s == webrtc.PeerConnectionStateFailed {
+		switch s {
+		case webrtc.PeerConnectionStateConnected:
+			acceptOnce.Do(func() {
+				select {
+				case l.acceptCh <- kc:
+				case <-l.closed:
+				}
+			})
+		case webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateFailed:
+			kc.markClosed(nil)
 			l.removeEntry(ufrag)
 		}
 	})
 
 	port := l.udp.LocalAddr().(*net.UDPAddr).Port
-	offerSDP := buildClientOffer(ufrag, port)
+	offerSDP := buildClientOffer(ufrag, pwd, port)
 	if err := pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offerSDP}); err != nil {
 		_ = pc.Close()
 		return nil
@@ -271,7 +273,7 @@ func (l *Listener) spawnPC(ufrag string) *pcEntry {
 		return nil
 	}
 
-	return &pcEntry{ufrag: ufrag, inbox: inbox, conn: pcc, pc: pc}
+	return &pcEntry{ufrag: ufrag, inbox: inbox, conn: pcc, pc: pc, kc: kc}
 }
 
 func (l *Listener) removeEntry(ufrag string) {
@@ -287,6 +289,9 @@ func (l *Listener) removeEntry(ufrag string) {
 			delete(l.byAddr, k)
 		}
 	}
+	if entry.kc != nil {
+		entry.kc.markClosed(nil)
+	}
 	_ = entry.conn.Close()
 }
 
@@ -294,7 +299,7 @@ func (l *Listener) removeEntry(ufrag string) {
 // produced. We use a placeholder DTLS fingerprint because pion is
 // configured with DisableCertificateFingerprintVerification — the server
 // doesn't pin the browser's identity.
-func buildClientOffer(ufrag string, port int) string {
+func buildClientOffer(ufrag, pwd string, port int) string {
 	const placeholderFingerprint = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
 	lines := []string{
 		"v=0",
@@ -305,7 +310,7 @@ func buildClientOffer(ufrag string, port int) string {
 		"c=IN IP4 0.0.0.0",
 		"a=mid:0",
 		fmt.Sprintf("a=ice-ufrag:%s", ufrag),
-		fmt.Sprintf("a=ice-pwd:%s", ufrag),
+		fmt.Sprintf("a=ice-pwd:%s", pwd),
 		fmt.Sprintf("a=fingerprint:sha-256 %s", placeholderFingerprint),
 		"a=setup:active",
 		"a=sctp-port:5000",

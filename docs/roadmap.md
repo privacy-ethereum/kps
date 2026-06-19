@@ -59,10 +59,21 @@ paths, with zero semantic changes.
 
 ---
 
-## Milestone 2 — Connection-first API, unnamed byte streams (WebRTC)
+## Milestone 2 — Connection-first API, unnamed byte streams (WebRTC) — CORE COMPLETE
 
 Realise SPEC §6.2 on the existing WebRTC transport. This is the core abstraction
 change.
+
+Done: Go + JS byte `Stream` with the DATA/FIN/RESET/STOP_SENDING framing and
+`CloseWrite`/`CancelRead`/`ResetWrite`; `Conn`/`Listener.Accept`/`AcceptStream`
+(Go) and `openStream`/`acceptStream`/`close`/`datagrams` (JS, WHATWG
+`readable`/`writable`); the one-shot `kps.openStream(addr)`; the censorship
+fixes (ICE pwd from certhash, shorter ufrag, blanked cert CN + random serial);
+and both demos migrated to a one-line protocol selector over the byte stream.
+Verified green: Go build/vet, JS tsc, web vite build, and the Playwright echo
+test (browser ↔ Go over unnamed byte streams; `CloseWrite`→EOF exercised).
+Remaining nicety: dedicated interop assertions for `cancelRead`/`resetWrite`
+(deferred to the M4 interop matrix).
 
 - Go: add `Conn` interface + `Listener.Accept` / `Conn.AcceptStream`; drop
   `Handle(name,…)`. Replace message `Send`/`Recv` with byte `Read`/`Write` +
