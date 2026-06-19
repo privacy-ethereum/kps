@@ -1,8 +1,11 @@
-module github.com/voltrevo/kps/demo/server
+module github.com/voltrevo/kps/libs/go
 
 go 1.24.0
 
-require github.com/voltrevo/kps/server v0.0.0
+require (
+	github.com/pion/stun/v3 v3.1.2
+	github.com/pion/webrtc/v4 v4.2.12
+)
 
 require (
 	github.com/google/uuid v1.6.0 // indirect
@@ -18,15 +21,11 @@ require (
 	github.com/pion/sctp v1.9.5 // indirect
 	github.com/pion/sdp/v3 v3.0.18 // indirect
 	github.com/pion/srtp/v3 v3.0.10 // indirect
-	github.com/pion/stun/v3 v3.1.2 // indirect
 	github.com/pion/transport/v4 v4.0.1 // indirect
 	github.com/pion/turn/v5 v5.0.3 // indirect
-	github.com/pion/webrtc/v4 v4.2.12 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 )
-
-replace github.com/voltrevo/kps/server => ../../server

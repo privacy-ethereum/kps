@@ -4,7 +4,7 @@
 **/.run-state.json
 
 # go
-server/server
+libs/go/server
 *.key
 
 # playwright

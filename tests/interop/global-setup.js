@@ -8,10 +8,9 @@ import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '../..')
-const kpsRoot = resolve(here, '..')
-const clientDir = join(kpsRoot, 'client')
+const clientDir = join(repoRoot, 'libs/js')
 const clientDist = join(clientDir, 'dist')
-const serverDir = join(kpsRoot, 'server')
+const serverDir = join(repoRoot, 'libs/go')
 const serverBin = join(serverDir, 'server')
 const pageDir = join(here, 'page')
 const stateFilePath = join(here, '.run-state.json')

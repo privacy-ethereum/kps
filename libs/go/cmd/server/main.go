@@ -10,7 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/voltrevo/kps/server/kps"
+	kps "github.com/voltrevo/kps/libs/go"
 )
 
 func main() {

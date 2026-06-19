@@ -1,5 +1,5 @@
-server/server
-server/state.json
+server-go/server
+server-go/state.json
 web/node_modules
 web/dist
 web/dist-extension

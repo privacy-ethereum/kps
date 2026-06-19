@@ -22,7 +22,7 @@ address changes.
 From the dev machine:
 
 ```sh
-cd ~/workspaces/kps/demo/server
+cd ~/workspaces/kps/demos/chat/server-go
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/kps-demo-server .
 ssh <host> 'mkdir -p /opt/kps-demo'
 rsync -av /tmp/kps-demo-server <host>:/opt/kps-demo/kps-demo-server
@@ -67,7 +67,7 @@ ssh <host> 'journalctl -u kps-demo -n 5 --no-pager | grep -oE "[0-9.]+:[0-9]+:[A
 ```
 
 That string is what users paste into the browser. Bake it into
-[`demo/web/src/main.js`](../web/src/main.js) as `DEMO_ADDR` so the
+[`web/src/main.js`](../web/src/main.js) as `DEMO_ADDR` so the
 deployed web app pre-fills it.
 
 ## Service management
@@ -85,7 +85,7 @@ writes are confined to `/opt/kps-demo` via `ReadWritePaths`.
 ## Deploying new code
 
 ```sh
-cd ~/workspaces/kps/demo/server
+cd ~/workspaces/kps/demos/chat/server-go
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o /tmp/kps-demo-server .
 rsync -av /tmp/kps-demo-server <host>:/opt/kps-demo/kps-demo-server
 ssh <host> 'systemctl restart kps-demo'

@@ -31,7 +31,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/voltrevo/kps/server/kps"
+	kps "github.com/voltrevo/kps/libs/go"
 )
 
 const (

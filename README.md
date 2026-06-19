@@ -1,6 +1,6 @@
 # KPS — key-pinned stream
 
-![Browser dials a KPS server over UDP directly — no signalling server, CA, or domain registrar required.](demo/web/public/banner.avif)
+![Browser dials a KPS server over UDP directly — no signalling server, CA, or domain registrar required.](demos/chat/web/public/banner.avif)
 
 A small library for opening TCP-like streams between two parties identified
 by a cryptographic public key, not by a domain name signed by a certificate
@@ -60,9 +60,10 @@ a message in ~170 ms.
 ## Layout
 
 ```
-client/   TypeScript browser library — Connection, Stream, address helpers
-server/   Go server library + cmd/server demo CLI (echo handler)
-tests/    Playwright integration test — browser dials the Go server
+libs/js/        TypeScript browser/client library — Connection, Stream, address helpers
+libs/go/        Go library + cmd/server demo CLI — import "github.com/voltrevo/kps/libs/go"
+demos/chat/     Chat + eth-rpc demo (server-go + web) consuming the libraries
+tests/interop/  Playwright interop test — browser dials the Go server
 ```
 
 ## Quick taste

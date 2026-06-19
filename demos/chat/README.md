@@ -18,7 +18,7 @@ to a single KPS connection instead of libp2p WebRTC Direct.
 | connection-layer identity | server's libp2p peer ID | none — cert hash *is* the identity |
 | application-layer identity | libp2p peer ID for both ends | per-client Ed25519 keypair (KPS doesn't expose one) |
 | stream framing | multistream-select protocol IDs | data-channel labels (`chat`, `eth-rpc`) |
-| server | Node.js + js-libp2p | Go + `kps/server` |
+| server | Node.js + js-libp2p | Go + `github.com/voltrevo/kps/libs/go` |
 
 The DM E2EE story is the same: each browser mints an Ed25519 keypair, signs
 its ECDH-P256 DM key with it, the server verifies and republishes the
@@ -28,8 +28,8 @@ The server can route ciphertext but can't read or forge DMs.
 ## Layout
 
 ```
-server/    Go server (chat + eth-rpc handlers)
-web/       Vite app (chat UI + block explorer)
+server-go/      Go server (chat + eth-rpc handlers)
+web/            Vite app (chat UI + block explorer)
 web/extension/  MV3 manifest + bg script for Chrome unpacked-extension build
 ```
 
@@ -39,7 +39,7 @@ The web app depends on the KPS client, which lives one level up. Build it
 once first:
 
 ```sh
-cd ../client
+cd ../../libs/js
 npm install
 npm run build
 ```
@@ -47,7 +47,7 @@ npm run build
 Server (Go 1.24+):
 
 ```sh
-cd demo/server
+cd server-go
 go run .          # binds a free UDP port; persists port + cert in state.json
 # or: go run . -listen :41108 -ip 192.168.1.50
 ```
@@ -62,7 +62,7 @@ listening; dial from the browser:
 Web (Node 20+):
 
 ```sh
-cd demo/web
+cd web
 npm install
 npm run dev       # vite dev server
 ```
@@ -84,11 +84,11 @@ port directly:
 ## Chromium extension build (no CA dependency for the page either)
 
 ```sh
-cd demo/web
+cd web
 npm run build:extension
 ```
 
-Output lands in `demo/web/dist-extension/`. Load it in Chrome via
+Output lands in `web/dist-extension/`. Load it in Chrome via
 **Extensions → Developer mode → Load unpacked**, point at that folder,
 click the toolbar icon. The page loads from `chrome-extension://<id>/`,
 trusted at install time rather than by a public CA — neither the page nor
@@ -96,9 +96,9 @@ its connection to the server depends on a domain registrar or a CA.
 
 ## Deploy the web app to GitHub Pages
 
-The workflow at [`.github/workflows/pages.yml`](../.github/workflows/pages.yml)
-builds `demo/web/` and publishes on every push to `main` that touches
-`demo/web/**` or `client/**`. To enable it on your fork:
+The workflow at [`.github/workflows/pages.yml`](../../.github/workflows/pages.yml)
+builds `demos/chat/web/` and publishes on every push to `main` that touches
+`demos/chat/web/**` or `libs/js/**`. To enable it on your fork:
 
 1. **Settings → Pages**, set **Source** to **GitHub Actions**.
 2. Push to `main`.
