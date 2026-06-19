@@ -106,13 +106,18 @@ same address.
 
 For each inbound UDP datagram:
 
-1. If it originates from the source address of an already-established
-   connection, route it to that connection's transport.
+1. If its source address belongs to an established **WebRTC** connection, route
+   it there (covers post-handshake DTLS/SCTP).
 2. Else if it is a STUN message (RFC 5389 magic cookie `0x2112A442` at bytes
-   4–7, leading two bits zero) → **WebRTC path**.
-3. Else if it is a QUIC long-header packet (high bit `0x80` set, plausible
-   version field) → **QUIC path**.
-4. Else → **drop**.
+   4–7, leading two bits zero) → **WebRTC path** (a new or in-progress ICE
+   handshake).
+3. Else → **QUIC path**: hand the datagram to the QUIC transport, which
+   demultiplexes its own connections by connection ID and drops anything that
+   is not a valid QUIC packet.
+
+Equivalently: WebRTC is identified positively (STUN, or a known peer address);
+everything else is QUIC. This avoids fragile long-/short-header sniffing for
+established QUIC traffic.
 
 ### 5.2 WebRTC transport
 

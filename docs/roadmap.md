@@ -95,9 +95,24 @@ streams; closeWrite→EOF, resetWrite→error, cancelRead→stop all observable.
 
 ---
 
-## Milestone 3 — QUIC native transport + shared-port demux
+## Milestone 3 — QUIC native transport + shared-port demux — COMPLETE
 
 Add the second transport (SPEC §5.1, §5.3, §6.3).
+
+Done: `Conn`/`Stream` promoted to interfaces (WebRTC impls renamed
+`webrtcConn`/`webrtcStream`); `quic-go` added; native `kps.Dial` over QUIC with
+certhash pinning (`VerifyPeerCertificate`) and non-identifying `h3` ALPN;
+`quicConn`/`quicStream` mapping (`CloseWrite`→FIN, `CancelRead`→STOP_SENDING,
+`ResetWrite`→RESET_STREAM); and the shared-port demux — pump routes WebRTC
+(known addr / STUN) to pion and everything else to a `quic.Transport` over a
+virtual PacketConn on the same UDP socket. Verified: `go test` QUIC echo +
+certhash-mismatch rejection (sandbox-disabled, as quic-go's client socket needs
+DF/GSO syscalls), and the Playwright WebRTC echo against the QUIC-enabled
+listener — i.e. both transports on one listener/port.
+
+Note: a one-shot `kps.OpenStream(ctx, addr)` (Go) and a transport override are
+not yet added (native default is QUIC; there is no Go WebRTC client). The
+"both transports simultaneously in one process" assertion is folded into M4.
 
 - Add `quic-go`. Server: demux STUN vs QUIC long-header on the one UDP socket;
   feed QUIC datagrams to a `quic.Transport`; accept `quic.Connection`s as

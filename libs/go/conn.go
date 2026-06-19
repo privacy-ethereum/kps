@@ -17,13 +17,12 @@ var ErrDatagramsUnsupported = errors.New("kps: datagrams not supported")
 
 var errConnClosed = errors.New("kps: connection closed")
 
-// Conn is an authenticated, secure, multiplexed kps session (SPEC §4). It
-// carries any number of independent byte Streams. For v0 this is the WebRTC
-// transport; the QUIC transport (M3) will implement the same surface.
-type Conn struct {
+// webrtcConn is the WebRTC implementation of Conn (SPEC §4). It carries any
+// number of independent byte Streams over one PeerConnection.
+type webrtcConn struct {
 	pc *webrtc.PeerConnection
 
-	streamCh  chan *Stream
+	streamCh  chan *webrtcStream
 	streamSeq uint64
 
 	closeOnce sync.Once
@@ -31,10 +30,10 @@ type Conn struct {
 	closeErr  error
 }
 
-func newConn(pc *webrtc.PeerConnection) *Conn {
-	c := &Conn{
+func newConn(pc *webrtc.PeerConnection) *webrtcConn {
+	c := &webrtcConn{
 		pc:       pc,
-		streamCh: make(chan *Stream, 16),
+		streamCh: make(chan *webrtcStream, 16),
 		closedCh: make(chan struct{}),
 	}
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
@@ -48,9 +47,7 @@ func newConn(pc *webrtc.PeerConnection) *Conn {
 	return c
 }
 
-// OpenStream opens a new bidirectional byte stream and blocks until it is ready
-// or ctx is done. The data-channel label is generated and non-semantic.
-func (c *Conn) OpenStream(ctx context.Context) (*Stream, error) {
+func (c *webrtcConn) OpenStream(ctx context.Context) (Stream, error) {
 	select {
 	case <-c.closedCh:
 		return nil, errConnClosed
@@ -77,9 +74,7 @@ func (c *Conn) OpenStream(ctx context.Context) (*Stream, error) {
 	}
 }
 
-// AcceptStream returns the next stream opened by the peer, blocking until one
-// arrives, ctx is done, or the connection closes.
-func (c *Conn) AcceptStream(ctx context.Context) (*Stream, error) {
+func (c *webrtcConn) AcceptStream(ctx context.Context) (Stream, error) {
 	select {
 	case s := <-c.streamCh:
 		return s, nil
@@ -93,30 +88,22 @@ func (c *Conn) AcceptStream(ctx context.Context) (*Stream, error) {
 	}
 }
 
-// Close tears down the connection and invalidates all its streams.
-func (c *Conn) Close() error {
+func (c *webrtcConn) Close() error {
 	c.markClosed(nil)
 	return c.pc.Close()
 }
 
-// Closed returns a channel closed when the connection ends.
-func (c *Conn) Closed() <-chan struct{} { return c.closedCh }
+func (c *webrtcConn) Closed() <-chan struct{} { return c.closedCh }
 
-func (c *Conn) markClosed(err error) {
+func (c *webrtcConn) markClosed(err error) {
 	c.closeOnce.Do(func() {
 		c.closeErr = err
 		close(c.closedCh)
 	})
 }
 
-// SupportsDatagrams reports whether connection-level datagrams are available
-// (SPEC §7). v0 over WebRTC: not yet.
-func (c *Conn) SupportsDatagrams() bool { return false }
-
-// SendDatagram sends one unreliable, unordered datagram.
-func (c *Conn) SendDatagram([]byte) error { return ErrDatagramsUnsupported }
-
-// ReceiveDatagram receives one inbound datagram.
-func (c *Conn) ReceiveDatagram(context.Context) ([]byte, error) {
+func (c *webrtcConn) SupportsDatagrams() bool   { return false }
+func (c *webrtcConn) SendDatagram([]byte) error { return ErrDatagramsUnsupported }
+func (c *webrtcConn) ReceiveDatagram(context.Context) ([]byte, error) {
 	return nil, ErrDatagramsUnsupported
 }

@@ -2,6 +2,7 @@ package kps
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/pion/stun/v3"
 	"github.com/pion/webrtc/v4"
+	"github.com/quic-go/quic-go"
 )
 
 // Listener accepts kps connections on a UDP port. The same port serves
@@ -24,7 +26,13 @@ type Listener struct {
 	byUfrag map[string]*pcEntry
 	byAddr  map[netip.AddrPort]*pcEntry
 
-	acceptCh chan *Conn
+	acceptCh chan Conn
+
+	// QUIC transport sharing the same UDP socket (SPEC §5.1). pump feeds it the
+	// packets that are not WebRTC.
+	qpc    *quicPacketConn
+	quicTr *quic.Transport
+	quicLn *quic.Listener
 
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -46,7 +54,7 @@ type pcEntry struct {
 	inbox chan packetIn
 	conn  *pcPacketConn
 	pc    *webrtc.PeerConnection
-	kc    *Conn
+	kc    *webrtcConn
 }
 
 type packetIn struct {
@@ -84,11 +92,54 @@ func Listen(ctx context.Context, addr string, opts Options) (*Listener, error) {
 		udp:      udp,
 		byUfrag:  map[string]*pcEntry{},
 		byAddr:   map[netip.AddrPort]*pcEntry{},
-		acceptCh: make(chan *Conn, 16),
+		acceptCh: make(chan Conn, 16),
 		closed:   make(chan struct{}),
 	}
+	if err := l.startQUIC(); err != nil {
+		_ = udp.Close()
+		return nil, err
+	}
 	go l.pump()
+	go l.acceptQUIC()
 	return l, nil
+}
+
+// startQUIC brings up a QUIC listener over a virtual PacketConn that pump feeds,
+// sharing the same UDP socket and identity certificate (SPEC §5.1, §5.3).
+func (l *Listener) startQUIC() error {
+	cert, err := l.identity.tlsCertificate()
+	if err != nil {
+		return fmt.Errorf("kps: quic tls cert: %w", err)
+	}
+	tlsConf := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		NextProtos:   []string{alpnKPS},
+		MinVersion:   tls.VersionTLS13,
+	}
+	l.qpc = newQUICPacketConn(l.udp)
+	l.quicTr = &quic.Transport{Conn: l.qpc}
+	ln, err := l.quicTr.Listen(tlsConf, &quic.Config{})
+	if err != nil {
+		return fmt.Errorf("kps: quic listen: %w", err)
+	}
+	l.quicLn = ln
+	return nil
+}
+
+// acceptQUIC delivers accepted QUIC connections to the same queue as WebRTC.
+func (l *Listener) acceptQUIC() {
+	for {
+		qc, err := l.quicLn.Accept(context.Background())
+		if err != nil {
+			return
+		}
+		select {
+		case l.acceptCh <- newQUICConn(qc):
+		case <-l.closed:
+			_ = qc.CloseWithError(0, "")
+			return
+		}
+	}
 }
 
 // Address returns the public-facing kps address ("ip:port:certhash") for
@@ -119,7 +170,7 @@ func (l *Listener) Certhash() string {
 // Accept returns the next established connection, blocking until one arrives,
 // ctx is done, or the listener closes. Each Conn carries its own streams via
 // Conn.AcceptStream.
-func (l *Listener) Accept(ctx context.Context) (*Conn, error) {
+func (l *Listener) Accept(ctx context.Context) (Conn, error) {
 	select {
 	case c := <-l.acceptCh:
 		return c, nil
@@ -134,6 +185,18 @@ func (l *Listener) Close() error {
 	var err error
 	l.closeOnce.Do(func() {
 		close(l.closed)
+		if l.quicLn != nil {
+			_ = l.quicLn.Close()
+		}
+		// Close the virtual PacketConn BEFORE the Transport: Transport.Close
+		// waits for its read loop, which is blocked in qpc.ReadFrom until qpc
+		// closes — closing them in the other order deadlocks.
+		if l.qpc != nil {
+			_ = l.qpc.Close()
+		}
+		if l.quicTr != nil {
+			_ = l.quicTr.Close()
+		}
 		err = l.udp.Close()
 		l.mu.Lock()
 		for _, e := range l.byUfrag {
@@ -182,12 +245,22 @@ func (l *Listener) pump() {
 			}
 		}
 
+		pkt := make([]byte, n)
+		copy(pkt, buf[:n])
+
 		if entry == nil {
+			// Not an established WebRTC peer and not a new STUN binding: the only
+			// other transport is QUIC, so hand it to the QUIC transport (SPEC §5.1).
+			select {
+			case l.qpc.inbox <- packetIn{data: pkt, from: net.UDPAddrFromAddrPort(srcAddr)}:
+			case <-l.closed:
+				return
+			default:
+				// QUIC inbox full — drop
+			}
 			continue
 		}
 
-		pkt := make([]byte, n)
-		copy(pkt, buf[:n])
 		select {
 		case entry.inbox <- packetIn{data: pkt, from: net.UDPAddrFromAddrPort(srcAddr)}:
 		case <-l.closed:
@@ -318,6 +391,56 @@ func buildClientOffer(ufrag, pwd string, port int) string {
 	}
 	return strings.Join(lines, "\r\n") + "\r\n"
 }
+
+// quicPacketConn implements net.PacketConn for the shared QUIC transport.
+// Reads pull from an inbox channel (fed by pump with the non-WebRTC packets);
+// writes go to the shared real UDP socket. quic.Transport demultiplexes its own
+// connections by connection ID.
+type quicPacketConn struct {
+	inbox chan packetIn
+	udp   *net.UDPConn
+	laddr net.Addr
+
+	closeOnce sync.Once
+	closed    chan struct{}
+}
+
+func newQUICPacketConn(udp *net.UDPConn) *quicPacketConn {
+	return &quicPacketConn{
+		inbox:  make(chan packetIn, 256),
+		udp:    udp,
+		laddr:  udp.LocalAddr(),
+		closed: make(chan struct{}),
+	}
+}
+
+func (c *quicPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
+	select {
+	case e := <-c.inbox:
+		return copy(p, e.data), e.from, nil
+	case <-c.closed:
+		return 0, nil, net.ErrClosed
+	}
+}
+
+func (c *quicPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
+	select {
+	case <-c.closed:
+		return 0, net.ErrClosed
+	default:
+	}
+	return c.udp.WriteTo(p, addr)
+}
+
+func (c *quicPacketConn) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return nil
+}
+
+func (c *quicPacketConn) LocalAddr() net.Addr                { return c.laddr }
+func (c *quicPacketConn) SetDeadline(_ time.Time) error      { return nil }
+func (c *quicPacketConn) SetReadDeadline(_ time.Time) error  { return nil }
+func (c *quicPacketConn) SetWriteDeadline(_ time.Time) error { return nil }
 
 // pcPacketConn implements net.PacketConn for a single PeerConnection.
 // Reads pull from a per-PC inbox channel; writes go to the shared real

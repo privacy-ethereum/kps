@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
@@ -167,6 +168,17 @@ func buildCert(priv *ecdsa.PrivateKey) (*webrtc.Certificate, error) {
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
 	}
 	return webrtc.NewCertificate(priv, tmpl)
+}
+
+// tlsCertificate returns the identity as a crypto/tls certificate for the QUIC
+// transport. It is the same self-signed cert presented over DTLS, so a single
+// certhash pins both transports (SPEC §3).
+func (i *Identity) tlsCertificate() (tls.Certificate, error) {
+	pemStr, err := i.Certificate.PEM()
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+	return tls.X509KeyPair([]byte(pemStr), []byte(pemStr))
 }
 
 func writeCombinedPEM(path string, cert *webrtc.Certificate) error {

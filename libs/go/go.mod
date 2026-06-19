@@ -5,6 +5,7 @@ go 1.24.0
 require (
 	github.com/pion/stun/v3 v3.1.2
 	github.com/pion/webrtc/v4 v4.2.12
+	github.com/quic-go/quic-go v0.59.0
 )
 
 require (

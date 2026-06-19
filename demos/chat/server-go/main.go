@@ -147,7 +147,7 @@ func peekMethod(req json.RawMessage) string {
 // ---- chat roster ----
 
 type peerEntry struct {
-	stream      *kps.Stream
+	stream      kps.Stream
 	idPublicKey string // base64 raw Ed25519 pubkey; also the peerId
 	dmPublicKey string // base64 raw P-256 pubkey
 	dmSignature string // base64 sig over dm-key-payload
@@ -290,7 +290,7 @@ func forward(targetPeerID string, msg any) bool {
 // are unnamed, so the application does its own routing: a stream's first line
 // is a protocol selector ("chat" or "eth-rpc"); the rest is that protocol's
 // newline-delimited JSON.
-func handleConn(conn *kps.Conn) {
+func handleConn(conn kps.Conn) {
 	for {
 		stream, err := conn.AcceptStream(context.Background())
 		if err != nil {
@@ -300,10 +300,7 @@ func handleConn(conn *kps.Conn) {
 	}
 }
 
-func routeStream(stream *kps.Stream) {
-	if err := stream.WaitOpen(); err != nil {
-		return
-	}
+func routeStream(stream kps.Stream) {
 	r := bufio.NewReader(stream)
 	sel, err := r.ReadBytes('\n')
 	if err != nil {
@@ -339,7 +336,7 @@ func verifyDMSignature(idPubB64, dmPubB64, sigB64 string) bool {
 	return ed25519.Verify(ed25519.PublicKey(idPub), payload, sig)
 }
 
-func chatHandler(stream *kps.Stream, r *bufio.Reader) {
+func chatHandler(stream kps.Stream, r *bufio.Reader) {
 	var entry *peerEntry
 	var peerID string
 	defer func() {
@@ -474,7 +471,7 @@ func chatHandler(stream *kps.Stream, r *bufio.Reader) {
 	}
 }
 
-func rpcHandler(stream *kps.Stream, r *bufio.Reader) {
+func rpcHandler(stream kps.Stream, r *bufio.Reader) {
 	tag := "?"
 	log.Printf("[rpc+] %s", tag)
 	defer log.Printf("[rpc-] %s", tag)

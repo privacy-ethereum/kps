@@ -31,11 +31,10 @@ func (e *StreamError) Error() string {
 	return fmt.Sprintf("kps: stream reset (code %d)", e.Code)
 }
 
-// Stream is an unnamed, bidirectional, reliable, ordered byte stream over a kps
-// connection (SPEC §6). It implements io.Reader, io.Writer and io.Closer; it
-// carries no message boundaries. The underlying data-channel label is a
-// non-semantic implementation detail.
-type Stream struct {
+// webrtcStream is the WebRTC implementation of Stream (SPEC §6.2): a byte
+// stream over one SCTP data channel, framed with DATA/FIN/RESET/STOP_SENDING.
+// The data-channel label is a non-semantic implementation detail.
+type webrtcStream struct {
 	dc *webrtc.DataChannel
 
 	mu    sync.Mutex
@@ -54,8 +53,8 @@ type Stream struct {
 	openOnce sync.Once
 }
 
-func newStream(dc *webrtc.DataChannel) *Stream {
-	s := &Stream{dc: dc, openCh: make(chan struct{})}
+func newStream(dc *webrtc.DataChannel) *webrtcStream {
+	s := &webrtcStream{dc: dc, openCh: make(chan struct{})}
 	s.rcond = sync.NewCond(&s.mu)
 	s.wcond = sync.NewCond(&s.mu)
 
@@ -84,7 +83,7 @@ func newStream(dc *webrtc.DataChannel) *Stream {
 	return s
 }
 
-func (s *Stream) onFrame(data []byte) {
+func (s *webrtcStream) onFrame(data []byte) {
 	if len(data) == 0 {
 		return
 	}
@@ -117,7 +116,7 @@ func (s *Stream) onFrame(data []byte) {
 }
 
 // WaitOpen blocks until the data channel is open or the stream is closed.
-func (s *Stream) WaitOpen() error {
+func (s *webrtcStream) WaitOpen() error {
 	<-s.openCh
 	if s.dc.ReadyState() != webrtc.DataChannelStateOpen {
 		return errStreamClosed
@@ -128,7 +127,7 @@ func (s *Stream) WaitOpen() error {
 // Read fills p with inbound bytes, blocking until some are available. It
 // returns io.EOF after the peer's CloseWrite and all bytes are consumed, or a
 // *StreamError if the peer reset its write half.
-func (s *Stream) Read(p []byte) (int, error) {
+func (s *webrtcStream) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
@@ -156,7 +155,7 @@ func (s *Stream) Read(p []byte) (int, error) {
 // Write sends p as stream bytes, splitting into frames and applying backpressure
 // from the SCTP send buffer. It returns a *StreamError if the peer has cancelled
 // its read half (STOP_SENDING).
-func (s *Stream) Write(p []byte) (int, error) {
+func (s *webrtcStream) Write(p []byte) (int, error) {
 	if err := s.WaitOpen(); err != nil {
 		return 0, err
 	}
@@ -176,7 +175,7 @@ func (s *Stream) Write(p []byte) (int, error) {
 }
 
 // writeFrame blocks for backpressure, then sends one frame.
-func (s *Stream) writeFrame(frame []byte) error {
+func (s *webrtcStream) writeFrame(frame []byte) error {
 	s.mu.Lock()
 	for {
 		if s.peerStop != nil {
@@ -203,7 +202,7 @@ func (s *Stream) writeFrame(frame []byte) error {
 
 // CloseWrite gracefully finishes the local write half; the peer observes EOF
 // after all previously written bytes (SPEC §6.1).
-func (s *Stream) CloseWrite() error {
+func (s *webrtcStream) CloseWrite() error {
 	s.mu.Lock()
 	if s.writeClosed {
 		s.mu.Unlock()
@@ -220,7 +219,7 @@ func (s *Stream) CloseWrite() error {
 
 // CancelRead tells the peer we no longer want inbound bytes (STOP_SENDING). It
 // is cancellation, not graceful EOF.
-func (s *Stream) CancelRead(code ErrorCode) error {
+func (s *webrtcStream) CancelRead(code ErrorCode) error {
 	s.mu.Lock()
 	if s.readCancel {
 		s.mu.Unlock()
@@ -238,7 +237,7 @@ func (s *Stream) CancelRead(code ErrorCode) error {
 
 // ResetWrite aborts the local write half; the peer observes a stream error
 // rather than EOF.
-func (s *Stream) ResetWrite(code ErrorCode) error {
+func (s *webrtcStream) ResetWrite(code ErrorCode) error {
 	s.mu.Lock()
 	if s.writeClosed {
 		s.mu.Unlock()
@@ -255,7 +254,7 @@ func (s *Stream) ResetWrite(code ErrorCode) error {
 
 // Close tears down both halves: it finishes the write half (if still open),
 // cancels the read half, and closes the underlying channel.
-func (s *Stream) Close() error {
+func (s *webrtcStream) Close() error {
 	_ = s.CloseWrite()
 	_ = s.CancelRead(CodeClosed)
 	return s.dc.Close()

@@ -45,7 +45,7 @@ func main() {
 
 // handleConn echoes every stream the peer opens: it copies the stream's bytes
 // straight back until the peer finishes its write half (EOF).
-func handleConn(ctx context.Context, conn *kps.Conn) {
+func handleConn(ctx context.Context, conn kps.Conn) {
 	for {
 		s, err := conn.AcceptStream(ctx)
 		if err != nil {
