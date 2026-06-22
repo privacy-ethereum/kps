@@ -13,11 +13,11 @@ to a single KPS connection instead of libp2p WebRTC Direct.
 
 | | libp2p webrtc-direct-demo | KPS demo |
 |---|---|---|
-| address | `/ip4/.../udp/.../webrtc-direct/certhash/.../p2p/...` | `<ip>:<port>:<keyhash>` |
-| handshake | DTLS (cert-pinned) + Noise XX (peer-id-pinned) | DTLS only (cert-pinned) |
+| address | `/ip4/.../udp/.../webrtc-direct/certhash/.../p2p/...` | `<ip>:<port>:<certhash>` |
+| handshake | DTLS (cert-pinned) + Noise XX (peer-id-pinned) | cert-pinned DTLS (WebRTC) / TLS 1.3 (QUIC) |
 | connection-layer identity | server's libp2p peer ID | none — cert hash *is* the identity |
 | application-layer identity | libp2p peer ID for both ends | per-client Ed25519 keypair (KPS doesn't expose one) |
-| stream framing | multistream-select protocol IDs | data-channel labels (`chat`, `eth-rpc`) |
+| stream routing | multistream-select protocol IDs | one-line protocol selector (`chat`/`eth-rpc`) in the stream bytes |
 | server | Node.js + js-libp2p | Go + `github.com/voltrevo/kps/libs/go` |
 
 The DM E2EE story is the same: each browser mints an Ed25519 keypair, signs

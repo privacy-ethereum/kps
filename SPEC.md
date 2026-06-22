@@ -7,7 +7,7 @@
 > disagree, this document is the intended source of truth and the library is a
 > bug.
 
-KPS = **Key-Pinned Stream**. A KPS endpoint is identified by a pinned
+KPS = **Key Pinned Streams**. A KPS endpoint is identified by a pinned
 self-signed certificate, not by a CA-signed domain name. KPS provides an
 authenticated, encrypted, multiplexed connection carrying unnamed reliable
 bidirectional byte streams, plus optional connection-level datagrams.

@@ -3,14 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>KPS Demo</title>
+    <title>KPS: Key-Pinned Streams</title>
+    <meta
+      name="description"
+      content="KPS opens secure, multiplexed byte streams to a server identified by a pinned certificate hash — not a CA-signed domain. Works from the browser (WebRTC) and from native code (QUIC) on one UDP port."
+    />
     <link rel="stylesheet" href="/src/styles.css" />
   </head>
   <body>
     <div class="page">
       <header class="app-header">
         <div class="header-title">
-          <h1 id="title">KPS Demo</h1>
+          <h1 id="title">KPS: Key Pinned Streams</h1>
           <a class="github-link"
              href="https://github.com/voltrevo/kps"
              target="_blank"
@@ -54,9 +58,9 @@
             <li>You must present a certificate signed by a certificate authority.</li>
           </ol>
           <p class="lede">
-            <strong>KPS</strong> (key-pinned stream) restores the freedom to talk to
+            <strong>KPS</strong> (Key Pinned Streams) restores the freedom to talk to
             cryptographic identities instead of just those with
-            authority-controlled names.
+            authority-controlled names — from the browser, and from native code.
           </p>
         </section>
 
@@ -64,20 +68,38 @@
           <h3>The trick</h3>
           <ul>
             <li class="lede">
-              The address you dial is just <code>&lt;ip&gt;:&lt;port&gt;:&lt;keyhash&gt;</code>.
-              The keyhash is the SHA-256 of the server's self-signed TLS cert,
-              multibase-encoded (e.g. <code>uEi…</code>).
+              The address you dial is just <code>&lt;ip&gt;:&lt;port&gt;:&lt;certhash&gt;</code>.
+              The certhash is the SHA-256 of the server's self-signed
+              certificate, multibase-encoded (e.g. <code>uEi…</code>).
             </li><li class="lede">
-              KPS is built on the same wire trick as libp2p's WebRTC Direct: the
-              server listens on UDP, both sides synthesize the SDP from the
-              address, the browser accepts the DTLS handshake only if the cert
-              hashes to the pinned value. No signalling server.
+              From the browser, KPS uses the same wire trick as libp2p's WebRTC
+              Direct: the server listens on UDP, both sides synthesize the SDP
+              from the address, and the browser accepts the DTLS handshake only
+              if the cert hashes to the pinned value. No signalling server.
             </li><li class="lede">
-              Unlike the libp2p version, KPS drops everything above DTLS:
-              no Noise XX, no multistream-select, no peer store. Stream name
-              is the data-channel label; the cert hash is the only pinned key.
+              KPS drops everything libp2p layers above DTLS — no Noise XX, no
+              multistream-select, no peer store. Streams are <strong>unnamed byte
+              streams</strong>; applications frame and route inside the bytes.
+              The cert hash is the only pinned key.
             </li>
           </ul>
+        </section>
+
+        <section class="card">
+          <h3>Two transports, one port</h3>
+          <p class="lede-sm">
+            The browser path is WebRTC, because that's what a browser can speak
+            to a raw UDP endpoint. Native clients — Go today; Rust, CLIs and
+            mobile later — dial the <em>same address</em> over
+            <strong>QUIC</strong>, on the <em>same UDP port</em>. One listener
+            accepts both, and the public API hides which transport a connection
+            uses.
+          </p>
+          <p class="lede-sm">
+            A single self-signed certificate serves both: it's presented in the
+            WebRTC DTLS handshake and the QUIC TLS 1.3 handshake, and one certhash
+            pins both.
+          </p>
         </section>
 
         <section class="card">
@@ -85,10 +107,9 @@
           <p class="lede-sm">
             Everything above removes authority requirements from the
             <em>server</em>. But the browser app itself is still hosted
-            somewhere — typically on GitHub Pages — which requires
-            https, which requires a CA-signed cert for a registered
-            domain. That's the last authority-controlled link in the
-            chain between you and the server.
+            somewhere — which requires https, which requires a CA-signed
+            cert for a registered domain. That's the last authority-controlled
+            link in the chain between you and the server.
           </p>
           <p class="lede-sm">
             A Chromium extension build of the same app loads from
@@ -105,24 +126,24 @@
         <section class="card">
           <h3>What runs on top</h3>
           <p class="lede-sm">
-            The transport is the point; this demo bolts two example services
-            onto it, one stream per service.
+            The transport is the point; this demo bolts two example services onto
+            it. KPS streams are unnamed, so the demo does its own routing: each
+            stream opens with a one-line protocol selector, then that service's
+            messages follow.
           </p>
           <ul class="choices">
             <li>
-              <strong>Chat</strong> (<code>chat</code> stream) — a public
-              bulletin plus end-to-end encrypted direct messages. Each
-              client mints a fresh Ed25519 identity; their DM key is
-              signed by it, so the server can route messages but can't
-              read or forge DMs.
+              <strong>Chat</strong> (selector <code>chat</code>) — a public
+              bulletin plus end-to-end encrypted direct messages. Each client
+              mints a fresh Ed25519 identity; their DM key is signed by it, so
+              the server can route messages but can't read or forge DMs.
             </li>
             <li>
-              <strong>Block explorer</strong> (<code>eth-rpc</code> stream) — the
-              server proxies JSON-RPC calls to curated public endpoints for
+              <strong>Block explorer</strong> (selector <code>eth-rpc</code>) —
+              the server proxies JSON-RPC calls to curated public endpoints for
               Ethereum, Arbitrum, Optimism, Base, and Polygon; the browser
-              renders a small live explorer from the responses. The server
-              sees your queries; the public RPC endpoints only see the
-              server's IP.
+              renders a small live explorer from the responses. The server sees
+              your queries; the public RPC endpoints only see the server's IP.
             </li>
           </ul>
         </section>
@@ -130,10 +151,10 @@
         <section class="card">
           <h3>How the trust works</h3>
           <ol class="steps">
-            <li>The server generates a self-signed TLS certificate at first start, persisted to <code>kps.key</code>.</li>
-            <li>It encodes the SHA-256 of that certificate into its address: <code>&lt;ip&gt;:&lt;port&gt;:&lt;keyhash&gt;</code>.</li>
-            <li>You paste that address into the browser. The browser now knows the endpoint <em>and</em> the exact certificate fingerprint to expect.</li>
-            <li>The browser dials the IP and UDP port directly. It accepts the DTLS handshake only if the cert hashes to the pinned value.</li>
+            <li>The server generates a self-signed certificate at first start, persisted to <code>kps.key</code>.</li>
+            <li>It encodes the SHA-256 of that certificate into its address: <code>&lt;ip&gt;:&lt;port&gt;:&lt;certhash&gt;</code>.</li>
+            <li>You paste that address into the browser (or hand it to a native client). Both now know the endpoint <em>and</em> the exact certificate to expect.</li>
+            <li>The client dials the IP and UDP port directly and accepts the handshake only if the presented certificate hashes to the pinned value — the browser over DTLS, a native client over QUIC's TLS 1.3.</li>
           </ol>
           <p class="lede-sm">
             No domain. No certificate authority. No signalling relay. If the
@@ -172,6 +193,24 @@ go run .</code></pre>
             <li><strong>Same LAN</strong> — start the server with <code>-ip 192.168.x.x</code>.</li>
             <li><strong>Across the internet</strong> — public IP, or forward the UDP port.</li>
           </ul>
+        </section>
+
+        <section class="card">
+          <h3>Under the hood</h3>
+          <p class="lede-sm">
+            Beyond reliable streams, every KPS connection also carries
+            <strong>datagrams</strong> (unreliable, unordered, size-limited),
+            and the handshake is built to resist casual blocking: the ICE
+            password is derived from the certhash (so there's no recomputable
+            fingerprint), the QUIC ALPN carries no KPS-identifying marker, and
+            the certificate exposes no identifying metadata.
+          </p>
+          <p class="lede-sm">
+            The full details live in the
+            <a href="https://github.com/voltrevo/kps/blob/main/SPEC.md">protocol spec</a>
+            and the
+            <a href="https://github.com/voltrevo/kps/blob/main/SECURITY.md">security model</a>.
+          </p>
         </section>
 
       </div>
