@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>kps echo test</title></head>
+<body>
+  <pre id="status">idle</pre>
+  <pre id="result"></pre>
+  <script type="module">
+    import { dial } from '/kps-client/index.js'
+
+    const statusEl = document.getElementById('status')
+    const resultEl = document.getElementById('result')
+    const setStatus = s => { statusEl.textContent = s }
+
+    window.runEcho = async function (addr) {
+      setStatus('dialing')
+      const conn = await dial(addr)
+      setStatus('connected')
+      const stream = await conn.openStream()
+      setStatus('stream-open')
+
+      const text = `hello-${Date.now()}`
+
+      // Write the bytes and finish our write half so the echo server's io.Copy
+      // sees EOF, mirrors the bytes back, and then closes its own write half.
+      const writer = stream.writable.getWriter()
+      await writer.write(new TextEncoder().encode(text))
+      await writer.close()
+
+      // Read echoed bytes until the server closes its write half (EOF).
+      const reader = stream.readable.getReader()
+      const chunks = []
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) break
+        if (value) chunks.push(value)
+      }
+      const total = chunks.reduce((n, c) => n + c.length, 0)
+      const merged = new Uint8Array(total)
+      let off = 0
+      for (const c of chunks) { merged.set(c, off); off += c.length }
+      const echoed = new TextDecoder().decode(merged)
+      resultEl.textContent = echoed
+      setStatus('done')
+
+      await conn.close()
+      return echoed === text
+    }
+  </script>
+</body>
+</html>

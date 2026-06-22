@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  go:
+    name: Go (lib + interop matrix)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - name: Build + vet + test (libs/go)
+        working-directory: libs/go
+        # The QUIC interop tests dial a real QUIC client, which needs real UDP
+        # socket access (DF-bit / GSO / ECN socket options). A CI runner provides
+        # this; do not run these under a restrictive seccomp sandbox.
+        run: |
+          go build ./...
+          go vet ./...
+          go test -timeout 120s ./...
+      - name: Build demo server
+        working-directory: demos/chat/server-go
+        run: go build ./...
+
+  js:
+    name: JS library build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build @kps/client
+        working-directory: libs/js
+        run: |
+          npm install
+          npm run build
+
+  interop:
+    name: Interop (browser WebRTC ↔ Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install test deps
+        working-directory: tests/interop
+        run: npm install
+      - name: Install Playwright Chromium
+        working-directory: tests/interop
+        run: npx playwright install --with-deps chromium
+      - name: Run interop test
+        working-directory: tests/interop
+        run: npm test

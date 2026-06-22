@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>KPS: Key-Pinned Streams</title>
+    <meta
+      name="description"
+      content="KPS opens secure, multiplexed byte streams to a server identified by a pinned certificate hash — not a CA-signed domain. Works from the browser (WebRTC) and from native code (QUIC) on one UDP port."
+    />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="app-header">
+        <div class="header-title">
+          <h1 id="title">KPS: Key Pinned Streams</h1>
+          <a class="github-link"
+             href="https://github.com/voltrevo/kps"
+             target="_blank"
+             rel="noopener"
+             aria-label="View source on GitHub"
+             title="View source on GitHub">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.92.58.1.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.69-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.18 1.18.92-.26 1.91-.39 2.89-.39.98 0 1.97.13 2.89.39 2.21-1.49 3.18-1.18 3.18-1.18.63 1.58.23 2.75.11 3.04.74.8 1.19 1.83 1.19 3.09 0 4.42-2.69 5.4-5.25 5.68.41.35.78 1.05.78 2.12 0 1.53-.01 2.76-.01 3.14 0 .31.21.67.8.56C20.71 21.39 24 17.08 24 12c0-6.35-5.15-11.5-11.5-11.5z" />
+            </svg>
+          </a>
+        </div>
+        <div class="header-actions">
+          <button id="try-it" type="button" class="primary header-cta">Try it</button>
+          <div class="status" id="status" hidden>
+            <span class="dot" id="status-dot"></span>
+            <span class="status-text" id="status-text">idle</span>
+          </div>
+        </div>
+      </header>
+
+      <div id="landing" class="view landing">
+        <figure class="banner">
+          <img
+            src="./banner.avif"
+            width="1672"
+            height="941"
+            alt="Browser dials a KPS server over UDP directly — no signalling server, CA, or domain registrar required."
+          />
+        </figure>
+        <section class="hero">
+          <h2>Connection Freedom in the Browser</h2>
+          <p class="lede">
+            Browser vendors migrated the web from http to https in the
+            mid-2010s. That 's' adds encryption via TLS, which is great.
+          </p>
+          <p class="lede">
+            However, https also adds:
+          </p>
+          <ol class="lede hero-requirements">
+            <li>You must use a domain controlled by a domain registrar.</li>
+            <li>You must present a certificate signed by a certificate authority.</li>
+          </ol>
+          <p class="lede">
+            <strong>KPS</strong> (Key Pinned Streams) restores the freedom to talk to
+            cryptographic identities instead of just those with
+            authority-controlled names — from the browser, and from native code.
+          </p>
+        </section>
+
+        <section class="card">
+          <h3>The trick</h3>
+          <ul>
+            <li class="lede">
+              The address you dial is just <code>&lt;ip&gt;:&lt;port&gt;:&lt;certhash&gt;</code>.
+              The certhash is the SHA-256 of the server's self-signed
+              certificate, multibase-encoded (e.g. <code>uEi…</code>).
+            </li><li class="lede">
+              From the browser, KPS uses the same wire trick as libp2p's WebRTC
+              Direct: the server listens on UDP, both sides synthesize the SDP
+              from the address, and the browser accepts the DTLS handshake only
+              if the cert hashes to the pinned value. No signalling server.
+            </li><li class="lede">
+              KPS drops everything libp2p layers above DTLS — no Noise XX, no
+              multistream-select, no peer store. Streams are <strong>unnamed byte
+              streams</strong>; applications frame and route inside the bytes.
+              The cert hash is the only pinned key.
+            </li>
+          </ul>
+        </section>
+
+        <section class="card">
+          <h3>Two transports, one port</h3>
+          <p class="lede-sm">
+            The browser path is WebRTC, because that's what a browser can speak
+            to a raw UDP endpoint. Native clients — Go today; Rust, CLIs and
+            mobile later — dial the <em>same address</em> over
+            <strong>QUIC</strong>, on the <em>same UDP port</em>. One listener
+            accepts both, and the public API hides which transport a connection
+            uses.
+          </p>
+          <p class="lede-sm">
+            A single self-signed certificate serves both: it's presented in the
+            WebRTC DTLS handshake and the QUIC TLS 1.3 handshake, and one certhash
+            pins both.
+          </p>
+        </section>
+
+        <section class="card">
+          <h3>One dependency left: hosting the client</h3>
+          <p class="lede-sm">
+            Everything above removes authority requirements from the
+            <em>server</em>. But the browser app itself is still hosted
+            somewhere — which requires https, which requires a CA-signed
+            cert for a registered domain. That's the last authority-controlled
+            link in the chain between you and the server.
+          </p>
+          <p class="lede-sm">
+            A Chromium extension build of the same app loads from
+            <code>chrome-extension://&lt;id&gt;/</code>: trusted at
+            install time rather than by a public CA. Build it yourself
+            with <code>npm run build:extension</code> in
+            <code>demos/chat/web/</code> and load
+            <code>dist-extension/</code> as an unpacked extension. Now
+            neither the page nor its connection to the server depends
+            on a domain registrar or a certificate authority.
+          </p>
+        </section>
+
+        <section class="card">
+          <h3>What runs on top</h3>
+          <p class="lede-sm">
+            The transport is the point; this demo bolts two example services onto
+            it. KPS streams are unnamed, so the demo does its own routing: each
+            stream opens with a one-line protocol selector, then that service's
+            messages follow.
+          </p>
+          <ul class="choices">
+            <li>
+              <strong>Chat</strong> (selector <code>chat</code>) — a public
+              bulletin plus end-to-end encrypted direct messages. Each client
+              mints a fresh Ed25519 identity; their DM key is signed by it, so
+              the server can route messages but can't read or forge DMs.
+            </li>
+            <li>
+              <strong>Block explorer</strong> (selector <code>eth-rpc</code>) —
+              the server proxies JSON-RPC calls to curated public endpoints for
+              Ethereum, Arbitrum, Optimism, Base, and Polygon; the browser
+              renders a small live explorer from the responses. The server sees
+              your queries; the public RPC endpoints only see the server's IP.
+            </li>
+          </ul>
+        </section>
+
+        <section class="card">
+          <h3>How the trust works</h3>
+          <ol class="steps">
+            <li>The server generates a self-signed certificate at first start, persisted to <code>kps.key</code>.</li>
+            <li>It encodes the SHA-256 of that certificate into its address: <code>&lt;ip&gt;:&lt;port&gt;:&lt;certhash&gt;</code>.</li>
+            <li>You paste that address into the browser (or hand it to a native client). Both now know the endpoint <em>and</em> the exact certificate to expect.</li>
+            <li>The client dials the IP and UDP port directly and accepts the handshake only if the presented certificate hashes to the pinned value — the browser over DTLS, a native client over QUIC's TLS 1.3.</li>
+          </ol>
+          <p class="lede-sm">
+            No domain. No certificate authority. No signalling relay. If the
+            address reached you intact, the connection cannot be intercepted.
+          </p>
+        </section>
+
+        <section class="card">
+          <h3>Run a server</h3>
+          <p class="lede-sm">
+            Needs Go 1.24+. From the repo root:
+          </p>
+          <pre><code>cd demos/chat/server-go
+go run .</code></pre>
+          <p class="lede-sm">
+            Output looks like:
+          </p>
+          <pre><code>listening; dial from the browser:
+  192.168.1.50:41108:uEi...</code></pre>
+          <p class="muted">
+            On first run the server writes its TLS key to
+            <code>kps.key</code> and the chosen UDP port to
+            <code>state.json</code>. Both are reused on subsequent
+            starts so the address stays byte-identical across restarts.
+          </p>
+        </section>
+
+        <section class="card">
+          <h3>Pick the right address</h3>
+          <p class="lede-sm">
+            KPS is just UDP underneath. The browser must reach the
+            server's UDP port directly:
+          </p>
+          <ul class="choices">
+            <li><strong>Same machine</strong> — use the <code>127.0.0.1</code> address.</li>
+            <li><strong>Same LAN</strong> — start the server with <code>-ip 192.168.x.x</code>.</li>
+            <li><strong>Across the internet</strong> — public IP, or forward the UDP port.</li>
+          </ul>
+        </section>
+
+        <section class="card">
+          <h3>Under the hood</h3>
+          <p class="lede-sm">
+            Beyond reliable streams, every KPS connection also carries
+            <strong>datagrams</strong> (unreliable, unordered, size-limited),
+            and the handshake is built to resist casual blocking: the ICE
+            password is derived from the certhash (so there's no recomputable
+            fingerprint), the QUIC ALPN carries no KPS-identifying marker, and
+            the certificate exposes no identifying metadata.
+          </p>
+          <p class="lede-sm">
+            The full details live in the
+            <a href="https://github.com/voltrevo/kps/blob/main/SPEC.md">protocol spec</a>
+            and the
+            <a href="https://github.com/voltrevo/kps/blob/main/SECURITY.md">security model</a>.
+          </p>
+        </section>
+
+      </div>
+
+      <div id="app" class="view" hidden>
+        <section class="card connection-card">
+          <label class="checkbox-row">
+            <input type="checkbox" id="persistent-identity" autocomplete="off" />
+            <span>Use persistent identity</span>
+            <span class="hint">keeps your Ed25519 identity (and derived display name) stable across reloads; unchecked = fresh key per visit</span>
+          </label>
+
+          <div class="identity-row">
+            <div class="identity-display">
+              <div class="identity-label">Identity</div>
+              <div class="identity-name" id="identity-name">—</div>
+              <div class="identity-peer" id="identity-peer">…</div>
+            </div>
+            <button type="button" id="identity-refresh" class="ghost" aria-label="Regenerate identity" title="Regenerate identity">↻</button>
+          </div>
+
+          <label class="field-label field-label-spaced" for="addr-quick">Server</label>
+          <select id="addr-quick" class="addr-select">
+            <option value="">— pick or paste below —</option>
+          </select>
+          <input
+            id="addr"
+            class="addr-input"
+            type="text"
+            placeholder="192.168.x.x:41108:uEi..."
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div class="button-row">
+            <button id="check" type="button" class="ghost">Check</button>
+            <button id="connect" class="primary">Connect</button>
+            <button id="disconnect" class="ghost" disabled>Disconnect</button>
+          </div>
+          <div id="reach-result" class="reach-result" hidden></div>
+        </section>
+
+        <section class="card chat-card" id="chat-card" hidden>
+          <div class="tab-strip" role="tablist">
+            <button type="button" class="tab active" data-tab="messages" id="tab-messages" role="tab">Messages</button>
+            <button type="button" class="tab" data-tab="explorer" id="tab-explorer" role="tab">Explorer</button>
+          </div>
+          <div class="chat-body">
+          <aside class="sidebar" id="roster" aria-label="Conversations"></aside>
+          <div class="chat-main">
+            <div class="chat-panel" id="chat-panel">
+              <div class="chat-messages" id="log" aria-live="polite"></div>
+              <form id="compose" class="compose">
+                <input
+                  id="msg"
+                  type="text"
+                  placeholder="connect to start chatting"
+                  autocomplete="off"
+                  disabled
+                />
+                <button id="send" type="submit" class="primary" disabled>Send</button>
+              </form>
+            </div>
+            <div class="explorer-panel" id="explorer-panel" hidden>
+              <div class="explorer-header">
+                <div>
+                  <div class="explorer-title" id="explorer-title">—</div>
+                  <div class="explorer-sub" id="explorer-sub"></div>
+                </div>
+                <div class="explorer-controls">
+                  <button type="button" id="explorer-refresh" class="ghost">Refresh</button>
+                  <form id="explorer-search" class="explorer-search">
+                    <input id="explorer-query" type="text" placeholder="block # · 0x tx hash · 0x address" autocomplete="off" spellcheck="false" />
+                    <button type="submit" class="ghost">Search</button>
+                  </form>
+                </div>
+              </div>
+              <div class="explorer-body" id="explorer-body"></div>
+            </div>
+          </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

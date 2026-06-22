@@ -4,8 +4,8 @@ on:
   push:
     branches: [main]
     paths:
-      - 'demo/web/**'
-      - 'client/**'
+      - 'demos/chat/web/**'
+      - 'libs/js/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -27,19 +27,19 @@ jobs:
         with:
           node-version: '22'
       - name: Build kps client
-        working-directory: client
+        working-directory: libs/js
         run: |
           npm install
           npm run build
       - name: Build web app
-        working-directory: demo/web
+        working-directory: demos/chat/web
         run: |
           npm install
           npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: demo/web/dist
+          path: demos/chat/web/dist
 
   deploy:
     needs: build
