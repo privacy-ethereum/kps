@@ -55,12 +55,6 @@ body {
   font-size: 15px;
   color: var(--text);
   background: var(--bg);
-  background-image: radial-gradient(
-    1200px 600px at 80% -200px,
-    var(--accent-weak),
-    transparent 60%
-  );
-  background-repeat: no-repeat;
   min-height: 100%;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -76,15 +70,18 @@ body {
   position: sticky;
   top: 0;
   z-index: 20;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.header-inner {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 0.9rem 1rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  margin: -2rem 0 1.25rem;
-  padding: 1.25rem 0 0.75rem;
-  background: transparent;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
 }
 
 .app-header h1 {
@@ -967,7 +964,7 @@ button.big {
 
 @media (max-width: 520px) {
   .page { padding: 1rem 0.75rem 2rem; }
-  .app-header { flex-direction: column; align-items: stretch; }
+  .header-inner { flex-direction: column; align-items: stretch; }
   .status { align-self: flex-start; }
   .chat-messages { flex: 1 1 auto; min-height: 200px; }
   .hero h2 { font-size: 1.4rem; }
