@@ -8,6 +8,8 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
+	"strconv"
 	"sync/atomic"
 
 	"github.com/quic-go/quic-go"
@@ -36,7 +38,7 @@ func Dial(ctx context.Context, addr string) (Conn, error) {
 		NextProtos:            []string{alpnKPS},
 		VerifyPeerCertificate: pinCerthash(digest),
 	}
-	qc, err := quic.DialAddr(ctx, fmt.Sprintf("%s:%d", a.IP, a.Port), tlsConf, &quic.Config{EnableDatagrams: true})
+	qc, err := quic.DialAddr(ctx, net.JoinHostPort(a.IP, strconv.Itoa(a.Port)), tlsConf, &quic.Config{EnableDatagrams: true})
 	if err != nil {
 		return nil, fmt.Errorf("kps: quic dial: %w", err)
 	}

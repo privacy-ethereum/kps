@@ -38,20 +38,26 @@ bidirectional byte streams, plus optional connection-level datagrams.
 ## 2. Address format
 
 ```
-<ip>:<udp-port>:<certhash>
+<ip>:<udp-port>:<certhash>          # IPv4
+[<ipv6>]:<udp-port>:<certhash>      # IPv6 (host bracketed)
 ```
 
-- `ip` — IPv4 dotted quad (v0 is IPv4-only; IPv6 is a future extension).
+- `ip` — an IPv4 dotted quad, or an IPv6 literal in square brackets (the literal
+  itself contains colons, so it is bracketed as in RFC 3986 / `net.JoinHostPort`).
 - `udp-port` — decimal 1–65535.
 - `certhash` — see §3.
 
 The address identifies **a UDP endpoint and a pinned server identity, nothing
 else.** It MUST NOT encode stream names, application protocols, or transport
 selection. The same address is dialable by both transports; the dialer chooses
-the transport (§5.4).
+the transport (§5.4). A listener binds dual-stack (one UDP socket serves both
+families), so one identity can be published at both a v4 and a v6 address —
+same certhash, same port. (Caveat: WebRTC over IPv6 needs the listener bound to
+a concrete v6 address for ICE candidate formation; QUIC works on the dual-stack
+wildcard.)
 
-Future address formats (multiaddr-style, multiple certhashes, IPv6, DNS names)
-are out of scope for v0 and explicitly deferred.
+Future address formats (multiaddr-style, multiple certhashes, DNS names) are out
+of scope for v0 and explicitly deferred.
 
 ---
 

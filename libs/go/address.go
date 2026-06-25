@@ -15,20 +15,52 @@ type Address struct {
 	Certhash string
 }
 
-// ParseAddress parses "<ip>:<port>:<certhash>".
+// ParseAddress parses "<ip>:<port>:<certhash>". IPv6 hosts are bracketed,
+// "[<ipv6>]:<port>:<certhash>", because the literal itself contains colons.
 func ParseAddress(s string) (Address, error) {
-	parts := strings.SplitN(s, ":", 3)
-	if len(parts) != 3 {
-		return Address{}, fmt.Errorf("kps: malformed address %q (want ip:port:certhash)", s)
+	malformed := func() (Address, error) {
+		return Address{}, fmt.Errorf("kps: malformed address %q (want ip:port:certhash or [ipv6]:port:certhash)", s)
 	}
-	port, err := strconv.Atoi(parts[1])
+
+	var host, rest string
+	if strings.HasPrefix(s, "[") {
+		end := strings.Index(s, "]")
+		if end < 0 || end+1 >= len(s) || s[end+1] != ':' {
+			return malformed()
+		}
+		host = s[1:end]
+		rest = s[end+2:]
+	} else {
+		i := strings.IndexByte(s, ':')
+		if i < 0 {
+			return malformed()
+		}
+		host = s[:i]
+		rest = s[i+1:]
+	}
+
+	// rest is "<port>:<certhash>"; the certhash never contains ':'.
+	j := strings.IndexByte(rest, ':')
+	if j < 0 {
+		return malformed()
+	}
+	port, err := strconv.Atoi(rest[:j])
 	if err != nil || port < 1 || port > 65535 {
 		return Address{}, fmt.Errorf("kps: bad port in address %q", s)
 	}
-	if parts[0] == "" || parts[2] == "" {
-		return Address{}, fmt.Errorf("kps: malformed address %q", s)
+	certhash := rest[j+1:]
+	if host == "" || certhash == "" {
+		return malformed()
 	}
-	return Address{IP: parts[0], Port: port, Certhash: parts[2]}, nil
+	return Address{IP: host, Port: port, Certhash: certhash}, nil
+}
+
+// joinHostPortCerthash formats an address, bracketing IPv6 hosts.
+func joinHostPortCerthash(ip string, port int, certhash string) string {
+	if strings.Contains(ip, ":") {
+		return fmt.Sprintf("[%s]:%d:%s", ip, port, certhash)
+	}
+	return fmt.Sprintf("%s:%d:%s", ip, port, certhash)
 }
 
 // decodeCerthash returns the raw 32-byte sha-256 digest carried by a certhash:

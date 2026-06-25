@@ -34,6 +34,11 @@ func DialWebRTC(ctx context.Context, addr string) (Conn, error) {
 
 	se := webrtc.SettingEngine{}
 	se.SetICECredentials(ufrag, pwd) // force local ICE creds (server derives the same)
+	se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4, webrtc.NetworkTypeUDP6})
+	// Gather loopback candidates so a client can reach a server on the same host
+	// (127.0.0.1 / ::1) — needed for IPv6 loopback, where there may be no other
+	// v6 path, and harmless otherwise.
+	se.SetIncludeLoopbackCandidate(true)
 	api := webrtc.NewAPI(webrtc.WithSettingEngine(se))
 	pc, err := api.NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
@@ -106,14 +111,18 @@ func digestToFingerprint(d []byte) string {
 }
 
 func synthesizeWebRTCAnswer(a Address, ufrag, pwd, fingerprint string) string {
+	fam, anyAddr := "IP4", "0.0.0.0"
+	if strings.Contains(a.IP, ":") {
+		fam, anyAddr = "IP6", "::"
+	}
 	lines := []string{
 		"v=0",
-		"o=- 0 0 IN IP4 0.0.0.0",
+		fmt.Sprintf("o=- 0 0 IN %s %s", fam, anyAddr),
 		"s=-",
 		"t=0 0",
 		"a=ice-lite",
 		fmt.Sprintf("m=application %d UDP/DTLS/SCTP webrtc-datachannel", a.Port),
-		fmt.Sprintf("c=IN IP4 %s", a.IP),
+		fmt.Sprintf("c=IN %s %s", fam, a.IP),
 		"a=mid:0",
 		fmt.Sprintf("a=ice-ufrag:%s", ufrag),
 		fmt.Sprintf("a=ice-pwd:%s", pwd),

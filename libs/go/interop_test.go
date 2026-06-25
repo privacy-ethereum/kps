@@ -16,12 +16,16 @@ import (
 
 // listenWith starts a kps listener that runs onStream for every accepted stream.
 func listenWith(t *testing.T, ctx context.Context, onStream func(Stream)) *Listener {
+	return listenWithBind(t, ctx, "127.0.0.1:0", onStream)
+}
+
+func listenWithBind(t *testing.T, ctx context.Context, bind string, onStream func(Stream)) *Listener {
 	t.Helper()
 	id, err := GenerateIdentity()
 	if err != nil {
 		t.Fatal(err)
 	}
-	ln, err := Listen(ctx, "127.0.0.1:0", Options{Identity: id})
+	ln, err := Listen(ctx, bind, Options{Identity: id})
 	if err != nil {
 		t.Fatal(err)
 	}

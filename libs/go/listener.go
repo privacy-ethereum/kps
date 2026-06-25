@@ -78,11 +78,14 @@ func Listen(ctx context.Context, addr string, opts Options) (*Listener, error) {
 		}
 	}
 
-	udpAddr, err := net.ResolveUDPAddr("udp4", addr)
+	// "udp" (not "udp4") + a wildcard host binds dual-stack on most systems
+	// (Linux defaults IPV6_V6ONLY=0), so one socket and port serve both IPv4
+	// and IPv6 clients. The demux and routing are address-family agnostic.
+	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("kps: resolve %q: %w", addr, err)
 	}
-	udp, err := net.ListenUDP("udp4", udpAddr)
+	udp, err := net.ListenUDP("udp", udpAddr)
 	if err != nil {
 		return nil, fmt.Errorf("kps: listen %q: %w", addr, err)
 	}
@@ -154,7 +157,7 @@ func (l *Listener) Address(ip string) string {
 		}
 	}
 	port := l.udp.LocalAddr().(*net.UDPAddr).Port
-	return fmt.Sprintf("%s:%d:%s", ip, port, l.identity.Certhash)
+	return joinHostPortCerthash(ip, port, l.identity.Certhash)
 }
 
 // Port returns the UDP port the listener bound to.
@@ -233,7 +236,7 @@ func (l *Listener) pump() {
 				l.mu.Lock()
 				entry = l.byUfrag[ufrag]
 				if entry == nil {
-					entry = l.spawnPC(ufrag)
+					entry = l.spawnPC(ufrag, srcAddr.Addr())
 					if entry != nil {
 						l.byUfrag[ufrag] = entry
 					}
@@ -287,12 +290,13 @@ func extractUfrag(p []byte) string {
 	return parts[0]
 }
 
-func (l *Listener) spawnPC(ufrag string) *pcEntry {
+func (l *Listener) spawnPC(ufrag string, clientIP netip.Addr) *pcEntry {
 	inbox := make(chan packetIn, 256)
 	pcc := newPCConn(inbox, l.udp, l.udp.LocalAddr())
 
 	se := webrtc.SettingEngine{}
 	se.SetLite(true)
+	se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4, webrtc.NetworkTypeUDP6})
 	se.SetICEUDPMux(&singleConnMux{conn: pcc})
 	se.DisableCertificateFingerprintVerification(true)
 	// Derive the ICE password from the pinned certhash (SPEC §5.2); the client
@@ -331,7 +335,7 @@ func (l *Listener) spawnPC(ufrag string) *pcEntry {
 	})
 
 	port := l.udp.LocalAddr().(*net.UDPAddr).Port
-	offerSDP := buildClientOffer(ufrag, pwd, port)
+	offerSDP := buildClientOffer(ufrag, pwd, port, clientIP)
 	if err := pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offerSDP}); err != nil {
 		_ = pc.Close()
 		return nil
@@ -372,15 +376,19 @@ func (l *Listener) removeEntry(ufrag string) {
 // produced. We use a placeholder DTLS fingerprint because pion is
 // configured with DisableCertificateFingerprintVerification — the server
 // doesn't pin the browser's identity.
-func buildClientOffer(ufrag, pwd string, port int) string {
+func buildClientOffer(ufrag, pwd string, port int, clientIP netip.Addr) string {
 	const placeholderFingerprint = "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+	fam, anyAddr := "IP4", "0.0.0.0"
+	if clientIP.IsValid() && !clientIP.Unmap().Is4() {
+		fam, anyAddr = "IP6", "::"
+	}
 	lines := []string{
 		"v=0",
-		"o=- 0 0 IN IP4 0.0.0.0",
+		fmt.Sprintf("o=- 0 0 IN %s %s", fam, anyAddr),
 		"s=-",
 		"t=0 0",
 		fmt.Sprintf("m=application %d UDP/DTLS/SCTP webrtc-datachannel", port),
-		"c=IN IP4 0.0.0.0",
+		fmt.Sprintf("c=IN %s %s", fam, anyAddr),
 		"a=mid:0",
 		fmt.Sprintf("a=ice-ufrag:%s", ufrag),
 		fmt.Sprintf("a=ice-pwd:%s", pwd),

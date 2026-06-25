@@ -56,14 +56,16 @@ export function rewriteOfferUfrag(sdp: string, ufrag: string, pwd: string): stri
 
 export function synthesizeAnswer(addr: Address, ufrag: string, pwd: string): string {
   const fingerprint = digestToSdpFingerprint(decodeCerthash(addr.certhash))
+  const ip6 = addr.ip.includes(':')
+  const fam = ip6 ? 'IP6' : 'IP4'
   const lines = [
     'v=0',
-    'o=- 0 0 IN IP4 0.0.0.0',
+    `o=- 0 0 IN ${fam} ${ip6 ? '::' : '0.0.0.0'}`,
     's=-',
     't=0 0',
     'a=ice-lite',
     `m=application ${addr.port} UDP/DTLS/SCTP webrtc-datachannel`,
-    `c=IN IP4 ${addr.ip}`,
+    `c=IN ${fam} ${addr.ip}`,
     'a=mid:0',
     `a=ice-ufrag:${ufrag}`,
     `a=ice-pwd:${pwd}`,
