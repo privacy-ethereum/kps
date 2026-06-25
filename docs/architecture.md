@@ -103,7 +103,7 @@ kps/
   SECURITY.md
 
   libs/
-    js/                # was client/  — browser/client library (@kps/client → kps)
+    js/                # was client/  — browser/client library (npm: key-pinned-streams)
       package.json
       src/
       test/
@@ -130,22 +130,22 @@ kps/
 
 ### Go module path (decision needed — see roadmap §"Open decisions")
 
-Today: `github.com/voltrevo/kps/server`, imported as
-`github.com/voltrevo/kps/server/kps`. The doubled tail is what we want to fix.
+Today: `github.com/privacy-ethereum/kps/server`, imported as
+`github.com/privacy-ethereum/kps/server/kps`. The doubled tail is what we want to fix.
 
 A module not at the repo root must have a module path equal to its repo-relative
-subdir, so a module at `libs/go` is `github.com/voltrevo/kps/libs/go`.
+subdir, so a module at `libs/go` is `github.com/privacy-ethereum/kps/libs/go`.
 Recommended option: put the public `kps` package **at the module root** so the
 import path tail is `go`, not a doubled `kps`:
 
 ```
-libs/go/go.mod         → module github.com/voltrevo/kps/libs/go
+libs/go/go.mod         → module github.com/privacy-ethereum/kps/libs/go
 libs/go/*.go           → package kps          // import ".../libs/go", used as kps.Dial
 libs/go/cmd/...        → demo/CLI binaries
 ```
 
 This trades the doubled `…/kps/kps` for a `…/libs/go` tail. Alternatives (root
-go.mod for a clean `github.com/voltrevo/kps`; or a vanity import path) are listed
+go.mod for a clean `github.com/privacy-ethereum/kps`; or a vanity import path) are listed
 as an open decision in the roadmap.
 
 ---

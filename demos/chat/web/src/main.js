@@ -1,6 +1,6 @@
 // kps demo: chat (with E2EE DMs) + eth-rpc explorer over kps streams.
 
-import { dial, parseAddress } from '@kps/client'
+import { dial, parseAddress } from 'key-pinned-streams'
 
 const CHAT_STREAM = 'chat'
 const RPC_STREAM = 'eth-rpc'

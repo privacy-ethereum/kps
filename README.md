@@ -73,7 +73,7 @@ covers the real browser ↔ Go path. CI runs the lot.
 
 ```
 libs/js/        TypeScript browser/client library — Connection, Stream, address helpers
-libs/go/        Go library + cmd/server demo CLI — import "github.com/voltrevo/kps/libs/go"
+libs/go/        Go library + cmd/server demo CLI — import "github.com/privacy-ethereum/kps/libs/go"
 demos/chat/     Chat + eth-rpc demo (server-go + web) consuming the libraries
 tests/interop/  Playwright interop test — browser dials the Go server
 ```
@@ -112,7 +112,7 @@ io.Copy(os.Stdout, s) // "hello"
 Browser (WebRTC):
 
 ```js
-import { dial } from '@kps/client'
+import { dial } from 'key-pinned-streams'
 
 const conn = await dial('192.168.x.y:4242:uEi...')
 const stream = await conn.openStream()

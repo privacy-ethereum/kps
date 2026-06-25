@@ -1,4 +1,4 @@
-module github.com/voltrevo/kps/libs/go
+module github.com/privacy-ethereum/kps/libs/go
 
 go 1.24.0
 

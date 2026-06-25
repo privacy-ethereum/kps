@@ -18,7 +18,7 @@ to a single KPS connection instead of libp2p WebRTC Direct.
 | connection-layer identity | server's libp2p peer ID | none — cert hash *is* the identity |
 | application-layer identity | libp2p peer ID for both ends | per-client Ed25519 keypair (KPS doesn't expose one) |
 | stream routing | multistream-select protocol IDs | one-line protocol selector (`chat`/`eth-rpc`) in the stream bytes |
-| server | Node.js + js-libp2p | Go + `github.com/voltrevo/kps/libs/go` |
+| server | Node.js + js-libp2p | Go + `github.com/privacy-ethereum/kps/libs/go` |
 
 The DM E2EE story is the same: each browser mints an Ed25519 keypair, signs
 its ECDH-P256 DM key with it, the server verifies and republishes the

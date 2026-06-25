@@ -36,7 +36,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Build @kps/client
+      - name: Build key-pinned-streams (JS library)
         working-directory: libs/js
         run: |
           npm install

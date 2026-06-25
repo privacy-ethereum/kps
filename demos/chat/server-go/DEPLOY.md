@@ -35,7 +35,7 @@ the public IP you want advertised in the printed address):
 ssh <host> 'cat > /etc/systemd/system/kps-demo.service <<UNIT
 [Unit]
 Description=KPS demo (chat + eth-rpc proxy)
-Documentation=https://github.com/voltrevo/kps
+Documentation=https://github.com/privacy-ethereum/kps
 After=network-online.target
 Wants=network-online.target
 
