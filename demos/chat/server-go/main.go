@@ -23,11 +23,13 @@ import (
 	"io"
 	"log"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -624,7 +626,12 @@ func main() {
 		if saved != nil {
 			port = saved.Port
 		}
-		listenAddr = fmt.Sprintf(":%d", port)
+		// Bind the concrete advertised IP when one is given (-ip). A wildcard
+		// host (":port" or "0.0.0.0:port") binds dual-stack on Linux, and a
+		// dual-stack socket reports v4 clients as v4-mapped IPv6 — which breaks
+		// WebRTC ICE pairing. Binding a concrete v4 address forces a clean v4
+		// socket. Fall back to the dual-stack wildcard only when no IP is set.
+		listenAddr = net.JoinHostPort(*ipFlag, strconv.Itoa(port))
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
