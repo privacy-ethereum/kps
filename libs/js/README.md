@@ -10,8 +10,8 @@ server's self-signed certificate, so as long as the address reaches you intact,
 the connection cannot be intercepted — no domain, no certificate authority, no
 signalling server.
 
-This package is the JavaScript/TypeScript **client**. The server is a Go library
-(`github.com/privacy-ethereum/kps/libs/go`). See the
+This package is the JavaScript/TypeScript **client**. The server has a Go
+implementation (`github.com/privacy-ethereum/kps/libs/go`). See the
 [project README](https://github.com/privacy-ethereum/kps#readme) and
 [protocol spec](https://github.com/privacy-ethereum/kps/blob/main/SPEC.md).
 
