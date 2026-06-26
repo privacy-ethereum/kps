@@ -7,8 +7,15 @@ const RPC_STREAM = 'eth-rpc'
 const BULLETIN = '__bulletin__'
 const RPC_TIMEOUT_MS = 20_000
 
-// If you run a public demo server, hardcode its address here.
+// If you run a public demo server, hardcode its address here. The same server
+// is reachable over IPv4 and IPv6 (one dual-stack socket, same certhash);
+// DEMO_ADDR (IPv4) is the default offered to first-time visitors.
 const DEMO_ADDR = '170.64.236.147:60949:uEiCkUUDgDV1i0X-h7AS3yMiv_aVZV2C0vige93oBFa2l6Q'
+const DEMO_ADDR_V6 = '[2400:6180:10:200::cca4:4000]:60949:uEiCkUUDgDV1i0X-h7AS3yMiv_aVZV2C0vige93oBFa2l6Q'
+const DEMO_ADDRS = [
+  { addr: DEMO_ADDR, label: 'Demo server (IPv4)' },
+  { addr: DEMO_ADDR_V6, label: 'Demo server (IPv6)' },
+]
 const SAVED_ADDRS_KEY = 'kps-demo:saved-addresses'
 const PERSISTENT_IDENTITY_KEY = 'kps-demo:persistent-identity'
 const IDENTITY_KEY_STORAGE_KEY = 'kps-demo:identity-key'
@@ -253,8 +260,10 @@ function rememberAddr(addr) {
 }
 
 function shortAddrLabel(addr) {
-  const m = addr.match(/^(\d+\.\d+\.\d+\.\d+):(\d+):/)
-  if (m) return `${m[1]}:${m[2]}`
+  const m4 = addr.match(/^(\d+\.\d+\.\d+\.\d+):(\d+):/)
+  if (m4) return `${m4[1]}:${m4[2]}`
+  const m6 = addr.match(/^(\[[0-9a-fA-F:]+\]):(\d+):/)
+  if (m6) return `${m6[1]}:${m6[2]}`
   return addr.length > 48 ? addr.slice(0, 45) + '…' : addr
 }
 
@@ -266,14 +275,15 @@ function renderAddrDropdown() {
   placeholder.textContent = '— pick or paste below —'
   addrSelect.appendChild(placeholder)
 
-  if (DEMO_ADDR) {
+  for (const d of DEMO_ADDRS) {
     const opt = document.createElement('option')
-    opt.value = DEMO_ADDR
-    opt.textContent = `Demo server · ${shortAddrLabel(DEMO_ADDR)}`
+    opt.value = d.addr
+    opt.textContent = `${d.label} · ${shortAddrLabel(d.addr)}`
     addrSelect.appendChild(opt)
   }
 
-  const others = savedAddrs.filter(s => s !== DEMO_ADDR)
+  const demoSet = new Set(DEMO_ADDRS.map(d => d.addr))
+  const others = savedAddrs.filter(s => !demoSet.has(s))
   if (others.length > 0) {
     const group = document.createElement('optgroup')
     group.label = 'recent'
@@ -307,10 +317,12 @@ addrInput.addEventListener('input', () => {
 })
 
 renderAddrDropdown()
-if (savedAddrs.length > 0) {
-  addrInput.value = savedAddrs[0]
-  if ([...addrSelect.options].some(o => o.value === savedAddrs[0])) {
-    addrSelect.value = savedAddrs[0]
+// Default to the most recent saved address, else the IPv4 demo server (not empty).
+const defaultAddr = savedAddrs[0] || DEMO_ADDR
+if (defaultAddr) {
+  addrInput.value = defaultAddr
+  if ([...addrSelect.options].some(o => o.value === defaultAddr)) {
+    addrSelect.value = defaultAddr
   }
 }
 
