@@ -1,0 +1,16 @@
+{
+  "name": "@kpstreams/core",
+  "version": "0.1.0",
+  "description": "Transport-neutral core for KPS: addresses, certhash, error model, and the Connection/Stream contract (plus the WebRTC wire protocol under ./webrtc). Zero runtime deps.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Andrew Morris",
+  "sideEffects": false,
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./webrtc": { "types": "./dist/webrtc.d.ts", "default": "./dist/webrtc.js" }
+  },
+  "files": ["dist"],
+  "scripts": { "build": "tsc" },
+  "devDependencies": { "typescript": "^5.6.0" }
+}

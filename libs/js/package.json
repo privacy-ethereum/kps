@@ -1,47 +1,12 @@
 {
-  "name": "key-pinned-streams",
-  "version": "0.1.0",
-  "description": "Browser client for KPS — secure, multiplexed byte streams to a server pinned by its certificate hash (no CA, no domain), over WebRTC.",
+  "name": "kpstreams-monorepo",
+  "private": true,
+  "version": "0.0.0",
   "type": "module",
-  "license": "MIT",
-  "author": "Andrew Morris",
-  "homepage": "https://github.com/privacy-ethereum/kps#readme",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/privacy-ethereum/kps.git",
-    "directory": "libs/js"
-  },
-  "bugs": {
-    "url": "https://github.com/privacy-ethereum/kps/issues"
-  },
-  "keywords": [
-    "kps",
-    "key-pinned",
-    "certhash",
-    "webrtc",
-    "webrtc-direct",
-    "byte-stream",
-    "datagram",
-    "secure-transport",
-    "p2p"
-  ],
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "default": "./dist/index.js"
-    }
-  },
-  "sideEffects": false,
-  "files": [
-    "dist",
-    "src"
-  ],
+  "workspaces": ["packages/*"],
   "scripts": {
-    "build": "tsc",
-    "watch": "tsc --watch",
-    "prepublishOnly": "npm run build"
+    "build": "npm run build -w @kpstreams/core && npm run build -w @kpstreams/webrtc-client && npm run build -w @kpstreams/quic-client && npm run build -w @kpstreams/server",
+    "clean": "rm -rf packages/*/dist"
   },
   "devDependencies": {
     "typescript": "^5.6.0"

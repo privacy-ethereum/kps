@@ -2,32 +2,13 @@
 // RTCPeerConnection and exposes openStream() / acceptStream() / close(). Streams
 // are unnamed; the data-channel label is a non-semantic implementation detail.
 
-import { parseAddress } from './address.js'
-import { decodeCerthash } from './certhash.js'
-import { generateUfrag, deriveICEPwd, rewriteOfferUfrag, synthesizeAnswer } from './sdp.js'
+import { parseAddress, decodeCerthash } from '@kpstreams/core'
+import { generateUfrag, deriveICEPwd, rewriteOfferUfrag, synthesizeAnswer } from '@kpstreams/core/webrtc'
 import { Stream } from './stream.js'
-import type { KpsReason } from './framing.js'
-
-export interface DialOptions {
-  signal?: AbortSignal
-  timeoutMs?: number
-}
-
-export interface ConnCloseInfo {
-  ok: boolean
-  reason?: KpsReason
-}
-
-// Datagrams (SPEC §7) — capability gated. Always present; unsupported in v0 over
-// WebRTC, signalled by maxSize 0 and a send() that rejects.
-export interface Datagrams {
-  // Send one unreliable, unordered datagram. There is a per-connection size
-  // limit (transport/path dependent); an oversized send rejects with an error
-  // carrying `code: 'too-large'` and `maxDatagramPayloadSize`. Payloads up to
-  // ~1100 bytes are safe on every connection.
-  send(data: Uint8Array, opts?: { signal?: AbortSignal }): Promise<void>
-  readonly incoming: ReadableStream<Uint8Array>
-}
+import type {
+  KpsReason, Datagrams, DialOptions, ConnCloseInfo,
+  Connection as CoreConnection,
+} from '@kpstreams/core'
 
 const DEFAULT_TIMEOUT = 15_000
 // Bootstrap channel: negotiated on both sides (no DCEP), so it never surfaces as
@@ -84,7 +65,7 @@ function makeDatagrams(dg: RTCDataChannel): Datagrams {
   }
 }
 
-export class Connection {
+export class Connection implements CoreConnection {
   readonly closed: Promise<ConnCloseInfo>
   readonly datagrams: Datagrams
   state: 'connecting' | 'open' | 'closed' = 'connecting'

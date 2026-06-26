@@ -11,25 +11,9 @@ export const FRAME_STOP_SENDING = 0x03
 // Largest stream payload carried in one DATA frame; larger writes are split.
 export const MAX_FRAME_PAYLOAD = 16 * 1024
 
-// KpsErrorCode is the canonical reset/cancel code set (SPEC §9.1), used in the
-// public API as a string; it maps to the wire uint32 below.
-export type KpsErrorCode =
-  | 'cancelled'
-  | 'closed'
-  | 'reset'
-  | 'timeout'
-  | 'network-error'
-  | 'protocol-error'
-  | 'unsupported'
-  | 'too-large'
-  | 'queue-full'
-  | 'permission-denied'
-  | 'internal-error'
-
-export interface KpsReason {
-  code?: KpsErrorCode
-  message?: string
-}
+// The error-code set and reason shape live in ./errors (transport-neutral); the
+// framing only needs the type to map codes to the wire uint32 below.
+import type { KpsErrorCode } from './errors.js'
 
 const CODE_TO_NUM: Record<KpsErrorCode, number> = {
   cancelled: 1,

@@ -1,0 +1,14 @@
+{
+  "name": "@kpstreams/webrtc-client",
+  "version": "0.1.0",
+  "description": "Browser WebRTC client for KPS: dial a server pinned by its certificate hash and open/accept unnamed byte streams. Zero native deps.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Andrew Morris",
+  "sideEffects": false,
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "files": ["dist"],
+  "dependencies": { "@kpstreams/core": "^0.1.0" },
+  "scripts": { "build": "tsc" },
+  "devDependencies": { "typescript": "^5.6.0" }
+}

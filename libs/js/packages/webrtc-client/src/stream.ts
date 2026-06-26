@@ -7,27 +7,14 @@ import {
   decodeFrame, encodeData, encodeFin, encodeCode,
   codeToNum, numToCode,
   FRAME_DATA, FRAME_FIN, FRAME_RESET, FRAME_STOP_SENDING,
-  MAX_FRAME_PAYLOAD, type KpsErrorCode, type KpsReason
-} from './framing.js'
+  MAX_FRAME_PAYLOAD,
+} from '@kpstreams/core/webrtc'
+import {
+  reasonFrom, streamError,
+  type KpsReason, type StreamCloseInfo, type Stream as CoreStream,
+} from '@kpstreams/core'
 
 const BUFFERED_AMOUNT_LOW = 1 << 20 // 1 MiB
-
-export interface StreamCloseInfo {
-  ok: boolean
-  reason?: KpsReason
-}
-
-function streamError(reason: KpsReason): Error {
-  const e = new Error(reason.message ?? `kps: stream ${reason.code ?? 'reset'}`)
-  ;(e as unknown as { code?: KpsErrorCode }).code = reason.code
-  return e
-}
-
-function reasonFrom(x: unknown): KpsReason | undefined {
-  if (x == null) return undefined
-  if (typeof x === 'object' && ('code' in x || 'message' in x)) return x as KpsReason
-  return { message: String((x as { message?: unknown })?.message ?? x) }
-}
 
 // RTCDataChannel.send wants an ArrayBuffer-backed view; copy to a fresh,
 // exactly-sized ArrayBuffer (also detaches from any SharedArrayBuffer typing).
@@ -35,7 +22,7 @@ function toArrayBuffer(u8: Uint8Array): ArrayBuffer {
   return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer
 }
 
-export class Stream {
+export class Stream implements CoreStream {
   readonly readable: ReadableStream<Uint8Array>
   readonly writable: WritableStream<Uint8Array>
   readonly closed: Promise<StreamCloseInfo>
