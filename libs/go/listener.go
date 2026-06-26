@@ -226,6 +226,12 @@ func (l *Listener) pump() {
 			continue
 		}
 
+		// The shared socket is dual-stack, so a v4 client's packets arrive as a
+		// v4-mapped IPv6 address (::ffff:a.b.c.d). Normalize to pure v4 so the
+		// byAddr key, the per-connection candidate family, and the remote address
+		// handed to pion's ICE all agree. Unmap is a no-op for real v6 peers.
+		srcAddr = netip.AddrPortFrom(srcAddr.Addr().Unmap(), srcAddr.Port())
+
 		l.mu.Lock()
 		entry := l.byAddr[srcAddr]
 		l.mu.Unlock()
@@ -292,11 +298,23 @@ func extractUfrag(p []byte) string {
 
 func (l *Listener) spawnPC(ufrag string, clientIP netip.Addr) *pcEntry {
 	inbox := make(chan packetIn, 256)
-	pcc := newPCConn(inbox, l.udp, l.udp.LocalAddr())
+
+	// The shared socket is dual-stack ([::]), so its LocalAddr is always v6.
+	// Advertise the mux (and restrict ICE) to the client's address family:
+	// pion only nominates a candidate pair when local and remote families match,
+	// so a v6 local candidate would never pair with a v4 client. We know the
+	// family here from the client's first STUN packet. Writes still go out the
+	// one dual-stack socket regardless of family.
+	port := l.udp.LocalAddr().(*net.UDPAddr).Port
+	localIP, netType := net.IP(net.IPv4zero), webrtc.NetworkTypeUDP4
+	if clientIP.Is6() {
+		localIP, netType = net.IPv6unspecified, webrtc.NetworkTypeUDP6
+	}
+	pcc := newPCConn(inbox, l.udp, &net.UDPAddr{IP: localIP, Port: port})
 
 	se := webrtc.SettingEngine{}
 	se.SetLite(true)
-	se.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4, webrtc.NetworkTypeUDP6})
+	se.SetNetworkTypes([]webrtc.NetworkType{netType})
 	se.SetICEUDPMux(&singleConnMux{conn: pcc})
 	se.DisableCertificateFingerprintVerification(true)
 	// Derive the ICE password from the pinned certhash (SPEC §5.2); the client
@@ -334,7 +352,6 @@ func (l *Listener) spawnPC(ufrag string, clientIP netip.Addr) *pcEntry {
 		}
 	})
 
-	port := l.udp.LocalAddr().(*net.UDPAddr).Port
 	offerSDP := buildClientOffer(ufrag, pwd, port, clientIP)
 	if err := pc.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeOffer, SDP: offerSDP}); err != nil {
 		_ = pc.Close()
