@@ -17,14 +17,14 @@ export function extractUfragFromLocalOffer(sdp: string): string {
   return m[1]
 }
 
-// A random connection-demux ufrag of normal WebRTC length (~72 bits). It no
-// longer doubles as the password, so it need not be pwd-length.
+// A random connection-demux ufrag (~72 bits), hex-encoded. It no longer doubles
+// as the password, so it need not be pwd-length. Hex keeps it within the ICE
+// character set (ALPHA/DIGIT); base64url's '-'/'_' are NOT valid ice-chars and
+// are rejected by strict stacks like libdatachannel (pion is lenient).
 export function generateUfrag(): string {
   const bytes = new Uint8Array(9)
   crypto.getRandomValues(bytes)
-  let bin = ''
-  for (const b of bytes) bin += String.fromCharCode(b)
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
 }
 
 // deriveICEPwd computes the ICE password from the pinned certhash digest and the
@@ -52,6 +52,33 @@ export function rewriteOfferUfrag(sdp: string, ufrag: string, pwd: string): stri
     return line
   })
   return lines.join('\r\n')
+}
+
+// buildClientOffer fabricates the SDP offer the client "would" have sent, for a
+// server (answerer) to SetRemoteDescription. The server learns the client's real
+// address peer-reflexively, so no candidate line is emitted; the fingerprint is a
+// placeholder because the server runs with fingerprint verification disabled (it
+// does not pin the client). Counterpart to synthesizeAnswer on the client side.
+const PLACEHOLDER_FINGERPRINT =
+  'AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99'
+
+export function buildClientOffer(ufrag: string, pwd: string): string {
+  const lines = [
+    'v=0',
+    'o=- 0 0 IN IP4 0.0.0.0',
+    's=-',
+    't=0 0',
+    'm=application 9 UDP/DTLS/SCTP webrtc-datachannel',
+    'c=IN IP4 0.0.0.0',
+    'a=mid:0',
+    `a=ice-ufrag:${ufrag}`,
+    `a=ice-pwd:${pwd}`,
+    `a=fingerprint:sha-256 ${PLACEHOLDER_FINGERPRINT}`,
+    'a=setup:active',
+    'a=sctp-port:5000',
+    'a=max-message-size:1048576'
+  ]
+  return lines.join('\r\n') + '\r\n'
 }
 
 export function synthesizeAnswer(addr: Address, ufrag: string, pwd: string): string {

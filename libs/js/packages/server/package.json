@@ -8,7 +8,12 @@
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "files": ["dist"],
   "engines": { "node": ">=20" },
-  "dependencies": { "@kpstreams/core": "^0.1.0" },
+  "dependencies": {
+    "@kpstreams/core": "^0.1.0",
+    "node-datachannel": "^0.32.0",
+    "@peculiar/x509": "^2.0.0",
+    "reflect-metadata": "^0.2.0"
+  },
   "scripts": { "build": "tsc" },
-  "devDependencies": { "typescript": "^5.6.0" }
+  "devDependencies": { "typescript": "^5.6.0", "@types/node": "^22.0.0" }
 }

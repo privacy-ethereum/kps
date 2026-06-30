@@ -12,5 +12,5 @@ export {
 export { digestToSdpFingerprint } from './certhash.js'
 export {
   extractUfragFromLocalOffer, generateUfrag, deriveICEPwd,
-  rewriteOfferUfrag, synthesizeAnswer,
+  rewriteOfferUfrag, synthesizeAnswer, buildClientOffer,
 } from './sdp.js'
