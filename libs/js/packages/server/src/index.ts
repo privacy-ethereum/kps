@@ -1,7 +1,7 @@
-// @kpstreams/server — the KPS-accepting end. Currently implements the WebRTC
-// transport (browser/webrtc-client peers): one IceUdpMuxListener accepting many
-// clients under a single pinned identity, presenting the transport-neutral core
-// Connection/Stream. (QUIC-accept is future work.)
+// @kpstreams/server — the KPS-accepting end. Accepts both WebRTC and QUIC
+// clients on a single public UDP port under one pinned identity (a demux relay
+// fronts per-transport loopback backends), presenting the transport-neutral core
+// Connection/Stream for either.
 
 export { listen } from './listener.js'
 export type { ListenOptions, Listener } from './listener.js'
