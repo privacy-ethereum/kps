@@ -11,6 +11,7 @@
   "dependencies": {
     "@kpstreams/core": "^0.1.0",
     "node-datachannel": "^0.32.0",
+    "@infisical/quic": "^1.0.8",
     "@peculiar/x509": "^2.0.0",
     "reflect-metadata": "^0.2.0"
   },
