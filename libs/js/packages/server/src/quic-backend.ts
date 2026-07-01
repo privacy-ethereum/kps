@@ -17,11 +17,15 @@ const { QUICServer, events: quicEvents } = quicPkg as unknown as {
     addEventListener: (type: string, cb: (e: Event) => void) => void
     start: (o: { host: string; port: number }) => Promise<void>
     stop: (o?: unknown) => Promise<void>
+    // QUICSocket is protected; accessible at runtime for the bound port.
+    socket: { readonly port: number; readonly host: string }
   }
   events: { EventQUICServerConnection: { name: string } }
 }
 
 export interface QUICBackend {
+  /** The loopback port the QUIC server actually bound (it self-assigns). */
+  readonly port: number
   close(): Promise<void>
 }
 
@@ -45,10 +49,9 @@ const serverCrypto = {
 export async function startQUICBackend(args: {
   identity: Identity
   host: string
-  port: number
   onConnection: (conn: CoreConnection) => void
 }): Promise<QUICBackend> {
-  const { identity, host, port, onConnection } = args
+  const { identity, host, onConnection } = args
   const certPem = readFileSync(identity.certPath, 'utf8')
   const keyPem = readFileSync(identity.keyPath, 'utf8')
 
@@ -71,12 +74,15 @@ export async function startQUICBackend(args: {
     onConnection(new QuicConnection(qc))
   })
 
-  await (server as unknown as { start: (o: { host: string; port: number }) => Promise<void> })
-    .start({ host, port })
+  // Bind an ephemeral loopback port (0) and read back the one it chose — the
+  // QUIC server self-assigns, so there's no probe-then-rebind race. (node-
+  // datachannel's mux can't do this, so the WebRTC backend still pre-picks.)
+  await server.start({ host, port: 0 })
 
   return {
+    port: server.socket.port,
     async close() {
-      try { await (server as unknown as { stop: (o?: unknown) => Promise<void> }).stop({ force: true }) } catch { /* ignore */ }
+      try { await server.stop({ force: true }) } catch { /* ignore */ }
     },
   }
 }

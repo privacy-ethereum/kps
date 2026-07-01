@@ -61,17 +61,21 @@ export async function listen(opts: ListenOptions): Promise<Listener> {
     else ready.push(conn)
   }
 
-  // Backends bind loopback ephemeral ports; the relay fronts the public port.
-  const webrtcPort = await freeUdpPort()
-  const quicPort = await freeUdpPort()
+  // Backends live on loopback behind the relay. QUIC self-assigns its port
+  // (bind :0, report it) so there's no race; node-datachannel's mux needs a
+  // real port up front, so WebRTC pre-picks a free one (tiny loopback window).
   let webrtc: WebRTCBackend | undefined
   let quic: QUICBackend | undefined
+  const webrtcPort = transports.has('webrtc') ? await freeUdpPort() : 0
   if (transports.has('webrtc')) {
     webrtc = startWebRTCBackend({ identity: id, host: '127.0.0.1', port: webrtcPort, onConnection })
   }
   if (transports.has('quic')) {
-    quic = await startQUICBackend({ identity: id, host: '127.0.0.1', port: quicPort, onConnection })
+    quic = await startQUICBackend({ identity: id, host: '127.0.0.1', onConnection })
   }
+  // With QUIC disabled, stray non-STUN harmlessly routes to the WebRTC backend
+  // (which ignores it).
+  const quicPort = quic?.port ?? webrtcPort
   const demux = await startDemux({ host: publicHost, port: opts.port, webrtcPort, quicPort })
 
   return {
