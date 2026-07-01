@@ -27,8 +27,11 @@ export function startWebRTCBackend(args: {
   mux.onUnhandledStunRequest(async (req: IceUdpMuxRequest) => {
     if (closed || !req.ufrag || peers.has(req.ufrag)) return
     const ufrag = req.ufrag
-    const pwd = await deriveICEPwd(identity.digest, ufrag)
 
+    // Claim the ufrag SYNCHRONOUSLY before any await. STUN is retransmitted, so
+    // onUnhandledStunRequest can fire again for the same ufrag before a PC exists;
+    // creating the PC (which needs no password) and registering it up front makes
+    // the has()-guard above authoritative and prevents a duplicate/orphaned PC.
     const pc = new PeerConnection(`kps-${ufrag}`, {
       iceServers: [],
       disableAutoNegotiation: true,
@@ -42,15 +45,18 @@ export function startWebRTCBackend(args: {
     })
     peers.set(ufrag, pc)
 
+    // Only delete our own entry (a later ufrag reuse must not be clobbered).
+    const drop = () => { if (peers.get(ufrag) === pc) peers.delete(ufrag) }
     const conn = new Connection(pc)
     conn.ready.then(() => { if (!closed) onConnection(conn) }).catch(() => { /* failed before open */ })
-    conn.closed.then(() => peers.delete(ufrag)).catch(() => peers.delete(ufrag))
+    conn.closed.then(drop).catch(drop)
 
     try {
+      const pwd = await deriveICEPwd(identity.digest, ufrag)
       pc.setRemoteDescription(buildClientOffer(ufrag, pwd), 'offer')
       pc.setLocalDescription('answer', { iceUfrag: ufrag, icePwd: pwd })
     } catch {
-      peers.delete(ufrag)
+      drop()
       try { pc.close() } catch { /* ignore */ }
     }
   })

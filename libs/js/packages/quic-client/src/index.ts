@@ -36,6 +36,7 @@ const clientCrypto = {
 }
 
 export async function dial(addr: string, opts: DialOptions = {}): Promise<Connection> {
+  if (opts.signal?.aborted) throw new Error('kps: dial aborted')
   const a = parseAddress(addr)
   const digest = Buffer.from(decodeCerthash(a.certhash))
 
@@ -57,7 +58,7 @@ export async function dial(addr: string, opts: DialOptions = {}): Promise<Connec
         enableDgram: [true, 1000, 1000],
       },
     },
-    { timer: opts.timeoutMs ?? 15_000 },
+    { timer: opts.timeoutMs ?? 15_000, signal: opts.signal },
   )
 
   const conn = new QuicConnection(client.connection)

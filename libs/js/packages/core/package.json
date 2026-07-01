@@ -10,7 +10,7 @@
     ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
     "./webrtc": { "types": "./dist/webrtc.d.ts", "default": "./dist/webrtc.js" }
   },
-  "files": ["dist"],
+  "files": ["dist", "src"],
   "scripts": { "build": "tsc" },
   "devDependencies": { "typescript": "^5.6.0" }
 }

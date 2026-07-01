@@ -6,6 +6,7 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "build": "npm run build -w @kpstreams/core && npm run build -w @kpstreams/webrtc-client && npm run build -w @kpstreams/quic-client && npm run build -w @kpstreams/server",
+    "test": "npm run build -w @kpstreams/core && node --test packages/core/test/*.test.mjs",
     "clean": "rm -rf packages/*/dist"
   },
   "devDependencies": {

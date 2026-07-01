@@ -26,8 +26,10 @@ export interface QUICBackend {
 }
 
 // Server token signing (retry/address validation): an HMAC over an ephemeral key.
+// Slice the exact 32 bytes — Buffer's backing ArrayBuffer can be a larger pool.
+const keyBytes = randomBytes(32)
 const serverCrypto = {
-  key: randomBytes(32).buffer,
+  key: keyBytes.buffer.slice(keyBytes.byteOffset, keyBytes.byteOffset + keyBytes.byteLength),
   ops: {
     async sign(key: ArrayBuffer, data: ArrayBuffer): Promise<ArrayBuffer> {
       const d = createHmac('sha256', Buffer.from(key)).update(Buffer.from(data)).digest()

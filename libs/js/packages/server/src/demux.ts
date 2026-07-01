@@ -31,7 +31,7 @@ function isStun(b: Buffer): boolean {
   return b.length >= 8 && b.readUInt32BE(4) === 0x2112a442
 }
 
-export function startDemux(opts: DemuxOptions): Demux {
+export function startDemux(opts: DemuxOptions): Promise<Demux> {
   const idleMs = opts.idleMs ?? 120_000
   const wildcard = !opts.host || opts.host === '0.0.0.0' || opts.host === '::'
   const v6Host = opts.host.includes(':')
@@ -62,9 +62,6 @@ export function startDemux(opts: DemuxOptions): Demux {
     e.last = Date.now()
     try { e.sock.send(data, e.backendPort, '127.0.0.1') } catch { /* backend gone */ }
   })
-  pub.on('error', () => {})
-  pub.bind(opts.port, wildcard ? undefined : opts.host)
-
   const gc = setInterval(() => {
     const now = Date.now()
     for (const [k, e] of table) {
@@ -73,7 +70,7 @@ export function startDemux(opts: DemuxOptions): Demux {
   }, Math.min(idleMs, 30_000))
   if (typeof (gc as { unref?: () => void }).unref === 'function') (gc as { unref: () => void }).unref()
 
-  return {
+  const demux: Demux = {
     close() {
       clearInterval(gc)
       for (const e of table.values()) { try { e.sock.close() } catch {} }
@@ -81,4 +78,18 @@ export function startDemux(opts: DemuxOptions): Demux {
       try { pub.close() } catch {}
     },
   }
+
+  // Resolve only once the socket is actually bound; reject bind errors
+  // (EADDRINUSE / EACCES / bad address) so listen() surfaces them instead of
+  // handing back a listener that isn't listening. Post-bind runtime errors are
+  // then swallowed (a stray ICMP shouldn't crash the relay).
+  return new Promise<Demux>((resolve, reject) => {
+    const onBindError = (err: Error) => { clearInterval(gc); try { pub.close() } catch {} ; reject(err) }
+    pub.once('error', onBindError)
+    pub.bind(opts.port, wildcard ? undefined : opts.host, () => {
+      pub.removeListener('error', onBindError)
+      pub.on('error', () => {})
+      resolve(demux)
+    })
+  })
 }

@@ -107,10 +107,19 @@ export class Stream implements CoreStream {
   }
 
   #drain(): Promise<void> {
-    if (this.#channel.bufferedAmount < BUFFERED_AMOUNT_LOW) return Promise.resolve()
+    if (this.#channel.bufferedAmount < BUFFERED_AMOUNT_LOW || this.#channel.readyState !== 'open') return Promise.resolve()
+    // Wake on close/error too, so a write awaiting backpressure can't hang
+    // forever if the peer goes away mid-drain; #writeChunk then re-checks state.
     return new Promise(resolve => {
-      const onLow = () => { this.#channel.removeEventListener('bufferedamountlow', onLow); resolve() }
-      this.#channel.addEventListener('bufferedamountlow', onLow)
+      const done = () => {
+        this.#channel.removeEventListener('bufferedamountlow', done)
+        this.#channel.removeEventListener('close', done)
+        this.#channel.removeEventListener('error', done)
+        resolve()
+      }
+      this.#channel.addEventListener('bufferedamountlow', done)
+      this.#channel.addEventListener('close', done)
+      this.#channel.addEventListener('error', done)
     })
   }
 

@@ -33,8 +33,9 @@ function makeDatagrams(dc: DataChannel): Datagrams {
     pull(controller) {
       const next = queue.shift()
       if (next) { controller.enqueue(next); return }
-      return new Promise<void>(resolve => { waiter = (v) => { controller.enqueue(v); resolve() } })
+      return new Promise<void>(resolve => { waiter = (v) => { try { controller.enqueue(v) } catch { /* reader cancelled */ } ; resolve() } })
     },
+    cancel() { waiter = null; queue.length = 0 },
   })
   return {
     async send(data: Uint8Array) {
@@ -85,10 +86,11 @@ export class Connection implements CoreConnection {
       } else if (s === 'failed') {
         this.#settleReady(new Error('kps: peer connection failed'))
         this.#fireClose({ ok: false, reason: { code: 'network-error', message: 'peer connection failed' } })
-      } else if (s === 'closed' || s === 'disconnected') {
+      } else if (s === 'closed') {
         this.#settleReady(new Error('kps: peer connection closed'))
         this.#fireClose({ ok: this.state !== 'connecting' })
       }
+      // 'disconnected' is transient; let it recover or escalate to 'failed'.
     })
 
     pc.onDataChannel((dc) => {
@@ -99,6 +101,7 @@ export class Connection implements CoreConnection {
   }
 
   async openStream(opts: OpenStreamOptions = {}): Promise<Stream> {
+    if (opts.signal?.aborted) throw new Error('kps: openStream aborted')
     if (this.state !== 'open') throw new Error(`kps: connection is ${this.state}`)
     const dc = this.#pc.createDataChannel(`kps-s-${++this.#seq}`)
     const stream = new Stream(dc) // registers handlers immediately
@@ -114,6 +117,7 @@ export class Connection implements CoreConnection {
   acceptStream(opts: AcceptStreamOptions = {}): Promise<Stream> {
     const ready = this.#incoming.shift()
     if (ready) return Promise.resolve(ready)
+    if (opts.signal?.aborted) return Promise.reject(new Error('kps: acceptStream aborted'))
     if (this.state === 'closed') return Promise.reject(new Error('kps: connection is closed'))
     const signal = opts.signal
     return new Promise<Stream>((resolve, reject) => {

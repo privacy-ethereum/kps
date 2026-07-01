@@ -47,9 +47,10 @@ function makeDatagrams(dg: RTCDataChannel): Datagrams {
       const next = queue.shift()
       if (next) { controller.enqueue(next); return }
       return new Promise<void>(resolve => {
-        waiter = (v) => { controller.enqueue(v); resolve() }
+        waiter = (v) => { try { controller.enqueue(v) } catch { /* reader cancelled */ } ; resolve() }
       })
-    }
+    },
+    cancel() { waiter = null; queue.length = 0 },
   })
   return {
     async send(data: Uint8Array) {
@@ -93,9 +94,12 @@ export class Connection implements CoreConnection {
         this.state = 'open'
       } else if (s === 'failed') {
         this.#fireClose({ ok: false, reason: { code: 'network-error', message: 'peer connection failed' } })
-      } else if (s === 'closed' || s === 'disconnected') {
+      } else if (s === 'closed') {
         this.#fireClose({ ok: this.state !== 'connecting' })
       }
+      // 'disconnected' is transient (a packet-loss blip that often recovers to
+      // 'connected'); don't tear down. If it doesn't recover, the state machine
+      // escalates to 'failed' on its own, which we handle above.
     })
 
     pc.addEventListener('datachannel', (e: RTCDataChannelEvent) => {
@@ -127,6 +131,7 @@ export class Connection implements CoreConnection {
 
   // Open a new unnamed bidirectional byte stream.
   async openStream(opts: { signal?: AbortSignal } = {}): Promise<Stream> {
+    if (opts.signal?.aborted) throw new Error('kps: openStream aborted')
     if (this.state !== 'open') throw new Error(`kps: connection is ${this.state}`)
     const label = `kps-${++this.#streamSeq}`
     const channel = this.#pc.createDataChannel(label)
@@ -150,6 +155,7 @@ export class Connection implements CoreConnection {
   acceptStream(opts: { signal?: AbortSignal } = {}): Promise<Stream> {
     const ready = this.#incoming.shift()
     if (ready) return Promise.resolve(ready)
+    if (opts.signal?.aborted) return Promise.reject(new Error('kps: acceptStream aborted'))
     if (this.state === 'closed') return Promise.reject(new Error('kps: connection is closed'))
     const signal = opts.signal
     return new Promise<Stream>((resolve, reject) => {

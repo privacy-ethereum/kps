@@ -1,12 +1,12 @@
 {
   "name": "@kpstreams/server",
   "version": "0.1.0",
-  "description": "KPS server: accepts WebRTC and QUIC clients under one pinned identity (stub — not yet implemented).",
+  "description": "KPS server: accepts WebRTC and QUIC clients under one pinned identity.",
   "type": "module",
   "license": "MIT",
   "author": "Andrew Morris",
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "files": ["dist"],
+  "files": ["dist", "src"],
   "engines": { "node": ">=20" },
   "dependencies": {
     "@kpstreams/core": "^0.1.0",

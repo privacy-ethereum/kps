@@ -51,8 +51,9 @@ function makeDatagrams(qc: QUICConnection): Datagrams {
     pull(controller) {
       const next = queue.shift()
       if (next) { controller.enqueue(next); return }
-      return new Promise<void>(resolve => { waiter = (v) => { controller.enqueue(v); resolve() } })
+      return new Promise<void>(resolve => { waiter = (v) => { try { controller.enqueue(v) } catch { /* reader cancelled */ } ; resolve() } })
     },
+    cancel() { waiter = null; queue.length = 0 },
   })
 
   return {
@@ -101,7 +102,8 @@ export class QuicConnection implements CoreConnection {
     }).catch(() => {})
   }
 
-  async openStream(_opts: OpenStreamOptions = {}): Promise<CoreStream> {
+  async openStream(opts: OpenStreamOptions = {}): Promise<CoreStream> {
+    if (opts.signal?.aborted) throw new Error('kps: openStream aborted')
     if (this.state !== 'open') throw new Error(`kps: connection is ${this.state}`)
     const qs = (this.#qc as unknown as { newStream: (t?: 'bidi' | 'uni') => ConstructorParameters<typeof QuicStream>[0] }).newStream('bidi')
     return new QuicStream(qs)

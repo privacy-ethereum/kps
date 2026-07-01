@@ -6,7 +6,7 @@
   "license": "MIT",
   "author": "Andrew Morris",
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
-  "files": ["dist"],
+  "files": ["dist", "src"],
   "engines": { "node": ">=20" },
   "dependencies": {
     "@kpstreams/core": "^0.1.0",

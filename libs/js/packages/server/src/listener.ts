@@ -10,7 +10,7 @@ import { formatAddress, type Connection as CoreConnection } from '@kpstreams/cor
 import { loadOrCreateIdentity } from './identity.js'
 import { startWebRTCBackend, type WebRTCBackend } from './webrtc-backend.js'
 import { startQUICBackend, type QUICBackend } from './quic-backend.js'
-import { startDemux, type Demux } from './demux.js'
+import { startDemux } from './demux.js'
 
 export interface ListenOptions {
   port: number
@@ -72,7 +72,7 @@ export async function listen(opts: ListenOptions): Promise<Listener> {
   if (transports.has('quic')) {
     quic = await startQUICBackend({ identity: id, host: '127.0.0.1', port: quicPort, onConnection })
   }
-  const demux: Demux = startDemux({ host: publicHost, port: opts.port, webrtcPort, quicPort })
+  const demux = await startDemux({ host: publicHost, port: opts.port, webrtcPort, quicPort })
 
   return {
     certhash: id.certhash,
@@ -84,14 +84,19 @@ export async function listen(opts: ListenOptions): Promise<Listener> {
       const r = ready.shift()
       if (r) return Promise.resolve(r)
       if (closed) return Promise.reject(new Error('kps: listener closed'))
+      if (o.signal?.aborted) return Promise.reject(new Error('kps: accept aborted'))
       return new Promise<CoreConnection>((resolve, reject) => {
-        const waiter = { resolve, reject }
-        waiters.push(waiter)
-        o.signal?.addEventListener('abort', () => {
+        const onAbort = () => {
           const i = waiters.indexOf(waiter)
           if (i >= 0) waiters.splice(i, 1)
           reject(new Error('kps: accept aborted'))
-        }, { once: true })
+        }
+        const waiter = {
+          resolve: (c: CoreConnection) => { o.signal?.removeEventListener('abort', onAbort); resolve(c) },
+          reject: (e: Error) => { o.signal?.removeEventListener('abort', onAbort); reject(e) },
+        }
+        waiters.push(waiter)
+        o.signal?.addEventListener('abort', onAbort, { once: true })
       })
     },
     async close() {
@@ -99,6 +104,8 @@ export async function listen(opts: ListenOptions): Promise<Listener> {
       demux.close()
       webrtc?.close()
       if (quic) await quic.close()
+      // Close connections that were accepted by a backend but never consumed.
+      while (ready.length) await ready.shift()!.close().catch(() => {})
       while (waiters.length) waiters.shift()!.reject(new Error('kps: listener closed'))
     },
   }

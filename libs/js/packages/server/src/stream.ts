@@ -33,6 +33,7 @@ export class Stream implements CoreStream {
   #peerStop: KpsReason | null = null
   #closeResolve!: (info: StreamCloseInfo) => void
   #closeSettled = false
+  #drainResolve: (() => void) | null = null
 
   constructor(dc: DataChannel) {
     this.#dc = dc
@@ -90,8 +91,13 @@ export class Stream implements CoreStream {
   }
 
   #drain(): Promise<void> {
-    if (this.#dc.bufferedAmount() < BUFFERED_AMOUNT_LOW) return Promise.resolve()
-    return new Promise(resolve => { this.#dc.onBufferedAmountLow(() => resolve()) })
+    if (this.#dc.bufferedAmount() < BUFFERED_AMOUNT_LOW || !this.#dc.isOpen()) return Promise.resolve()
+    // #settle (on close/error) also resolves this, so a write can't hang on a
+    // dead channel; #writeChunk then re-checks isOpen() and throws.
+    return new Promise(resolve => {
+      this.#drainResolve = resolve
+      this.#dc.onBufferedAmountLow(() => { const r = this.#drainResolve; this.#drainResolve = null; if (r) r() })
+    })
   }
 
   /** Gracefully finish the local write half; the peer observes EOF. */
@@ -123,6 +129,7 @@ export class Stream implements CoreStream {
 
   #settle(info: StreamCloseInfo): void {
     this.#endRead(info.ok ? null : info.reason ?? { code: 'network-error' })
+    if (this.#drainResolve) { const r = this.#drainResolve; this.#drainResolve = null; r() }
     if (this.#closeSettled) return
     this.#closeSettled = true
     this.#closeResolve(info)
