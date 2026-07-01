@@ -1,14 +1,17 @@
 {
   "name": "@kpstreams/quic-client",
   "version": "0.1.0",
-  "description": "QUIC client for KPS (stub — not yet implemented).",
+  "description": "Native QUIC client for KPS: dial a server pinned by its certificate hash.",
   "type": "module",
   "license": "MIT",
   "author": "Andrew Morris",
   "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
   "files": ["dist"],
   "engines": { "node": ">=20" },
-  "dependencies": { "@kpstreams/core": "^0.1.0" },
+  "dependencies": {
+    "@kpstreams/core": "^0.1.0",
+    "@infisical/quic": "^1.0.8"
+  },
   "scripts": { "build": "tsc" },
-  "devDependencies": { "typescript": "^5.6.0" }
+  "devDependencies": { "typescript": "^5.6.0", "@types/node": "^22.0.0" }
 }

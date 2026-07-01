@@ -22,7 +22,7 @@ server also has a Go implementation at
 | [`@kpstreams/core`](packages/core) | Transport-neutral surface — addresses, certhash, error model, the `Connection`/`Stream`/`Datagrams` contract, plus the WebRTC wire protocol under `@kpstreams/core/webrtc`. Zero runtime deps. | ✅ |
 | [`@kpstreams/webrtc-client`](packages/webrtc-client) | Browser WebRTC client: `dial()` a server and open/accept byte streams + datagrams. | ✅ |
 | [`@kpstreams/server`](packages/server) | Node server accepting **both** WebRTC and QUIC on a single public port under one pinned identity. Requires Node ≥ 20. | ✅ |
-| [`@kpstreams/quic-client`](packages/quic-client) | Native QUIC client. | 🚧 stub |
+| [`@kpstreams/quic-client`](packages/quic-client) | Native (Node) QUIC client: `dial()` a server over QUIC with certhash pinning. Requires Node ≥ 20. | ✅ |
 
 Clients are per-transport (a client knows its environment); the server is
 singular (it accepts whoever dials). Transport is the package boundary because
@@ -32,6 +32,7 @@ native, while QUIC needs a native binding.
 ## Which do I install?
 
 - **Browser app connecting to a KPS server** → `@kpstreams/webrtc-client`
+- **Node app connecting to a KPS server** → `@kpstreams/quic-client`
 - **Running a KPS server in Node** → `@kpstreams/server`
 - **Building your own transport / tooling** → `@kpstreams/core`
 
