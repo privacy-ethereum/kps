@@ -1,78 +1,50 @@
-# key-pinned-streams
+# KPS — JavaScript / TypeScript packages
 
-The browser client for **KPS** (Key-Pinned Streams): open secure, multiplexed
+This is the npm workspace for **KPS** (Key-Pinned Streams): secure, multiplexed
 byte streams to a server identified by its **certificate hash**, not by a
-CA-signed domain name. In the browser this runs over WebRTC; the same server is
-reachable from native code over QUIC.
+CA-signed domain name.
 
 The address you dial is just `<ip>:<port>:<certhash>`. The certhash pins the
 server's self-signed certificate, so as long as the address reaches you intact,
 the connection cannot be intercepted — no domain, no certificate authority, no
-signalling server.
+signalling server. In the browser this runs over WebRTC; native clients use
+QUIC; the same server address serves both.
 
-This package is the JavaScript/TypeScript **client**. The server has a Go
-implementation (`github.com/privacy-ethereum/kps/libs/go`). See the
-[project README](https://github.com/privacy-ethereum/kps#readme) and
-[protocol spec](https://github.com/privacy-ethereum/kps/blob/main/SPEC.md).
+See the [project README](https://github.com/privacy-ethereum/kps#readme) and the
+[protocol spec](https://github.com/privacy-ethereum/kps/blob/main/SPEC.md). The
+server also has a Go implementation at
+`github.com/privacy-ethereum/kps/libs/go`.
 
-## Install
+## Packages
+
+| Package | What it is | Status |
+|---|---|---|
+| [`@kpstreams/core`](packages/core) | Transport-neutral surface — addresses, certhash, error model, the `Connection`/`Stream`/`Datagrams` contract, plus the WebRTC wire protocol under `@kpstreams/core/webrtc`. Zero runtime deps. | ✅ |
+| [`@kpstreams/webrtc-client`](packages/webrtc-client) | Browser WebRTC client: `dial()` a server and open/accept byte streams + datagrams. | ✅ |
+| [`@kpstreams/server`](packages/server) | Node server accepting **both** WebRTC and QUIC on a single public port under one pinned identity. Requires Node ≥ 20. | ✅ |
+| [`@kpstreams/quic-client`](packages/quic-client) | Native QUIC client. | 🚧 stub |
+
+Clients are per-transport (a client knows its environment); the server is
+singular (it accepts whoever dials). Transport is the package boundary because
+that's the axis that controls weight — the browser WebRTC client pulls in nothing
+native, while QUIC needs a native binding.
+
+## Which do I install?
+
+- **Browser app connecting to a KPS server** → `@kpstreams/webrtc-client`
+- **Running a KPS server in Node** → `@kpstreams/server`
+- **Building your own transport / tooling** → `@kpstreams/core`
+
+## Developing this workspace
 
 ```sh
-npm install key-pinned-streams
+npm install          # links the workspace packages
+npm run build        # builds core first, then the rest
 ```
 
-## Usage
-
-```js
-import { dial } from 'key-pinned-streams'
-
-const conn = await dial('192.168.x.y:4242:uEi...')
-const stream = await conn.openStream()
-
-// write bytes
-const writer = stream.writable.getWriter()
-await writer.write(new TextEncoder().encode('hello'))
-await writer.close()              // graceful EOF for the peer
-
-// read bytes
-const reader = stream.readable.getReader()
-const { value } = await reader.read()
-console.log(new TextDecoder().decode(value))
-```
-
-Streams are **unnamed, reliable, ordered byte streams** with no message
-boundaries — frame and route your own protocol inside the bytes.
-
-```js
-await stream.closeWrite()          // finish the local write half (peer sees EOF)
-await stream.cancelRead(reason)    // stop wanting inbound bytes
-await stream.resetWrite(reason)    // abort the local write half (peer sees an error)
-await stream.close(reason)         // tear down both halves
-
-const inbound = await conn.acceptStream()   // accept a peer-opened stream
-await conn.close()
-```
-
-Connection-level **datagrams** (unreliable, unordered, size-limited):
-
-```js
-await conn.datagrams.send(bytes)   // rejects { code: 'too-large', maxDatagramPayloadSize } if over the limit
-for await (const dg of conn.datagrams.incoming) { /* ... */ }
-```
-
-One-shot convenience (dials, opens one stream, and ties the connection's lifetime
-to that stream):
-
-```js
-import { openStream } from 'key-pinned-streams'
-const stream = await openStream('192.168.x.y:4242:uEi...')
-```
-
-## Environment
-
-Browser-targeted: it uses `RTCPeerConnection`, `crypto.subtle`, and WHATWG
-`ReadableStream`/`WritableStream`. ESM only.
+Each package builds with `tsc` to its own `dist/`; `@kpstreams/core` must build
+before the packages that depend on it (the root `build` script orders this).
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
