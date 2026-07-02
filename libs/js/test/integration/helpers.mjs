@@ -6,8 +6,8 @@
 
 import dgram from 'node:dgram'
 import { spawn, execFileSync } from 'node:child_process'
-import { mkdtempSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -16,6 +16,19 @@ const here = dirname(fileURLToPath(import.meta.url))
 export const libsJs = resolve(here, '../..')
 export const repoRoot = resolve(libsJs, '../..')
 export const libsGo = join(repoRoot, 'libs', 'go')
+
+// Track every tmp dir we create (Go binaries can be tens of MiB each) and remove
+// them synchronously on exit — otherwise repeated runs pile up in the OS tmp dir.
+// Runs even under --test-force-exit, which exits via process.exit().
+const tmpDirs = new Set()
+function mkTmp(prefix) {
+  const d = mkdtempSync(join(tmpdir(), prefix))
+  tmpDirs.add(d)
+  return d
+}
+process.on('exit', () => {
+  for (const d of tmpDirs) { try { rmSync(d, { recursive: true, force: true }) } catch { /* best effort */ } }
+})
 
 // ── Server ────────────────────────────────────────────────────────────────
 
@@ -37,13 +50,13 @@ export function freeUdpPort() {
 // Start an in-process @kpstreams/server that echoes every stream: it copies the
 // peer's bytes straight back, then finishes its write half (mirrors the Go
 // echoHandler). Returns { srv, address, close }.
-export async function startJsServer({ transports } = {}) {
+export async function startJsServer() {
   const { listen } = await import('@kpstreams/server')
   const port = await freeUdpPort()
   // Fresh temp identity per server (avoids reusing/persisting kps-*.pem in cwd).
-  const idDir = mkdtempSync(join(tmpdir(), 'kps-it-id-'))
+  const idDir = mkTmp('kps-it-id-')
   const srv = await listen({
-    port, address: '127.0.0.1', transports,
+    port, address: '127.0.0.1',
     certPath: join(idDir, 'cert.pem'), keyPath: join(idDir, 'key.pem'),
   })
   const address = srv.address('127.0.0.1')
@@ -138,7 +151,7 @@ export function goAvailable() {
 
 let binDir
 function goBin(name, pkg) {
-  if (!binDir) binDir = mkdtempSync(join(tmpdir(), 'kps-it-bin-'))
+  if (!binDir) binDir = mkTmp('kps-it-bin-')
   const out = join(binDir, name)
   // Build once per process; execFileSync throws (fails the test) on error.
   execFileSync('go', ['build', '-o', out, pkg], { cwd: libsGo, stdio: 'pipe' })
@@ -155,7 +168,7 @@ function buildOnce(name, pkg) {
 // resolve once it prints its dial address. Returns { address, kill }.
 export async function spawnGoServer() {
   const bin = buildOnce('server', './cmd/server')
-  const stateDir = await mkdtemp(join(tmpdir(), 'kps-it-go-'))
+  const stateDir = mkTmp('kps-it-go-')
   const child = spawn(bin, ['-listen', '127.0.0.1:0', '-ip', '127.0.0.1', '-key', join(stateDir, 'kps.key')],
     { cwd: libsGo, stdio: ['ignore', 'pipe', 'pipe'] })
   child.stderr.on('data', () => {}) // swallow quic buffer-size warnings

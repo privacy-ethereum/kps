@@ -10,7 +10,7 @@ import { dial } from '@kpstreams/quic-client'
 import { startJsServer, echoRoundTrip } from './helpers.mjs'
 
 let server
-before(async () => { server = await startJsServer({ transports: ['quic'] }) })
+before(async () => { server = await startJsServer() })
 after(async () => { await server?.close() })
 
 const enc = (s) => new TextEncoder().encode(s)

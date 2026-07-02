@@ -6,7 +6,7 @@
 // ("127.0.0.1:<port>:<certhash>") on stdout, and echoes every stream.
 import { listen } from '../../libs/js/packages/server/dist/index.js'
 import dgram from 'node:dgram'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -20,8 +20,9 @@ function freeUdpPort() {
 
 const port = await freeUdpPort()
 const idDir = mkdtempSync(join(tmpdir(), 'kps-it-id-'))
+// The server serves both transports; the browser test only dials WebRTC.
 const srv = await listen({
-  port, address: '127.0.0.1', transports: ['webrtc'],
+  port, address: '127.0.0.1',
   certPath: join(idDir, 'cert.pem'), keyPath: join(idDir, 'key.pem'),
 })
 process.stdout.write(srv.address('127.0.0.1') + '\n')
@@ -51,6 +52,7 @@ process.stdout.write(srv.address('127.0.0.1') + '\n')
   }
 })()
 
+process.on('exit', () => { try { rmSync(idDir, { recursive: true, force: true }) } catch { /* best effort */ } })
 const bye = () => process.exit(0)
 process.on('SIGTERM', bye)
 process.on('SIGINT', bye)

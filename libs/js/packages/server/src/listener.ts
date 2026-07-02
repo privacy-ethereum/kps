@@ -8,8 +8,8 @@
 import dgram from 'node:dgram'
 import { formatAddress, type Connection as CoreConnection } from '@kpstreams/core'
 import { loadOrCreateIdentity } from './identity.js'
-import { startWebRTCBackend, type WebRTCBackend } from './webrtc-backend.js'
-import { startQUICBackend, type QUICBackend } from './quic-backend.js'
+import { startWebRTCBackend } from './webrtc-backend.js'
+import { startQUICBackend } from './quic-backend.js'
 import { startDemux } from './demux.js'
 
 export interface ListenOptions {
@@ -19,8 +19,6 @@ export interface ListenOptions {
   /** Persisted self-signed cert/key paths (created on first run). */
   certPath?: string
   keyPath?: string
-  /** Transports to accept; defaults to both. */
-  transports?: Array<'webrtc' | 'quic'>
 }
 
 export interface Listener {
@@ -48,7 +46,6 @@ function freeUdpPort(): Promise<number> {
 export async function listen(opts: ListenOptions): Promise<Listener> {
   const id = await loadOrCreateIdentity(opts.certPath, opts.keyPath)
   const publicHost = opts.address ?? '0.0.0.0'
-  const transports = new Set(opts.transports ?? ['webrtc', 'quic'])
 
   const ready: CoreConnection[] = []
   const waiters: Array<{ resolve: (c: CoreConnection) => void; reject: (e: Error) => void }> = []
@@ -61,22 +58,16 @@ export async function listen(opts: ListenOptions): Promise<Listener> {
     else ready.push(conn)
   }
 
-  // Backends live on loopback behind the relay. QUIC self-assigns its port
-  // (bind :0, report it) so there's no race; node-datachannel's mux needs a
-  // real port up front, so WebRTC pre-picks a free one (tiny loopback window).
-  let webrtc: WebRTCBackend | undefined
-  let quic: QUICBackend | undefined
-  const webrtcPort = transports.has('webrtc') ? await freeUdpPort() : 0
-  if (transports.has('webrtc')) {
-    webrtc = startWebRTCBackend({ identity: id, host: '127.0.0.1', port: webrtcPort, onConnection })
-  }
-  if (transports.has('quic')) {
-    quic = await startQUICBackend({ identity: id, host: '127.0.0.1', onConnection })
-  }
-  // With QUIC disabled, stray non-STUN harmlessly routes to the WebRTC backend
-  // (which ignores it).
-  const quicPort = quic?.port ?? webrtcPort
-  const demux = await startDemux({ host: publicHost, port: opts.port, webrtcPort, quicPort })
+  // A KPS server always serves BOTH transports on the one public port — a single
+  // advertised address ("ip:port:certhash") that either a WebRTC or a QUIC client
+  // can dial. The backends live on loopback behind the demux relay. QUIC
+  // self-assigns its port (bind :0, report it) so there's no race; node-
+  // datachannel's mux needs a real port up front, so WebRTC pre-picks a free one
+  // (tiny loopback window).
+  const webrtcPort = await freeUdpPort()
+  const webrtc = startWebRTCBackend({ identity: id, host: '127.0.0.1', port: webrtcPort, onConnection })
+  const quic = await startQUICBackend({ identity: id, host: '127.0.0.1', onConnection })
+  const demux = await startDemux({ host: publicHost, port: opts.port, webrtcPort, quicPort: quic.port })
 
   return {
     certhash: id.certhash,
@@ -106,8 +97,8 @@ export async function listen(opts: ListenOptions): Promise<Listener> {
     async close() {
       closed = true
       demux.close()
-      webrtc?.close()
-      if (quic) await quic.close()
+      webrtc.close()
+      await quic.close()
       // Close connections that were accepted by a backend but never consumed.
       while (ready.length) await ready.shift()!.close().catch(() => {})
       while (waiters.length) waiters.shift()!.reject(new Error('kps: listener closed'))

@@ -41,7 +41,9 @@ for (;;) {
 | `port` | — | public UDP port |
 | `address` | `'0.0.0.0'` | public bind (dual-stack wildcard) |
 | `certPath` / `keyPath` | `kps-cert.pem` / `kps-key.pem` | persisted identity (created on first run; keep stable to keep the certhash stable) |
-| `transports` | `['webrtc','quic']` | which transports to accept |
+
+The server always accepts **both** WebRTC and QUIC on the one public port under
+the single advertised address; a client picks its transport.
 
 `Listener`: `address(ip)`, `accept({ signal? })`, `close()`, plus `certhash` / `port`.
 
