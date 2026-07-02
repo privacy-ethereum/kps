@@ -60,7 +60,7 @@ export function encodeCode(type: number, code: number): Uint8Array {
 }
 
 // WebRTC CONNECTION_CLOSE (SPEC §8): a bare big-endian uint32 application error
-// code carried on the bootstrap channel before teardown — the WebRTC analogue of
+// code carried on the control channel before teardown — the WebRTC analogue of
 // QUIC CONNECTION_CLOSE. `encodeConnClose` builds it from a reason code;
 // `readConnCloseCode` reads the raw uint32 (0 = no specific reason / clean).
 export function encodeConnClose(code?: KpsErrorCode): Uint8Array {

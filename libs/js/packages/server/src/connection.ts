@@ -1,6 +1,6 @@
 // Server-side Connection: wraps a node-datachannel PeerConnection for one peer
 // and presents the transport-neutral core Connection. Application streams arrive
-// as data channels (onDataChannel); the negotiated bootstrap/datagram channels
+// as data channels (onDataChannel); the negotiated control/datagram channels
 // never surface as streams. Mirrors the browser webrtc-client Connection.
 
 import { PeerConnection, type DataChannel } from 'node-datachannel'
@@ -11,13 +11,12 @@ import type {
   KpsReason, OpenStreamOptions, AcceptStreamOptions,
 } from '@kpstreams/core'
 
-const BOOTSTRAP_LABEL = '_kps_bootstrap'
 const DATAGRAM_LABEL = '_kps_datagrams'
 const DATAGRAM_ID = 1
-// Reserved control channel (SPEC §8): negotiated, reliable, ordered. Carries the
-// CONNECTION_CLOSE message (the bootstrap channel never opens as a usable one).
+// Reserved control channel (SPEC §8): negotiated, reliable, ordered, fixed ID 0.
+// Forces the SCTP m-line (client side) and carries the CONNECTION_CLOSE message.
 const CONTROL_LABEL = '_kps_control'
-const CONTROL_ID = 2
+const CONTROL_ID = 0
 // Sub-MTU cap so each datagram is one unreliable SCTP message (matches the Go
 // and webrtc-client limits); the limit surfaces via the send error.
 const WEBRTC_MAX_DATAGRAM = 1200
@@ -132,7 +131,7 @@ export class Connection implements CoreConnection {
 
     pc.onDataChannel((dc) => {
       const label = dc.getLabel()
-      if (label === BOOTSTRAP_LABEL || label === DATAGRAM_LABEL || label === CONTROL_LABEL) return
+      if (label === CONTROL_LABEL || label === DATAGRAM_LABEL) return
       this.#enqueueIncoming(new Stream(dc))
     })
   }

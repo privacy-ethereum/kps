@@ -45,15 +45,15 @@ func DialWebRTC(ctx context.Context, addr string) (Conn, error) {
 		return nil, err
 	}
 
-	// Pre-allocate the negotiated bootstrap channel so the offer carries the
-	// application m-line; it is not announced via DCEP and never surfaces as a
-	// stream. (It never opens as a usable channel — CONNECTION_CLOSE rides the
-	// control channel at ID 2, opened in newConn; see SPEC §8.)
+	// Pre-allocate the negotiated control channel (ID 0) before the offer so the
+	// offer carries the application m-line; it also carries CONNECTION_CLOSE
+	// (SPEC §8). Not announced via DCEP; never surfaces as a stream.
 	negotiated := true
-	var bootstrapID uint16 = 0
-	if _, err := pc.CreateDataChannel("_kps_bootstrap", &webrtc.DataChannelInit{
-		Negotiated: &negotiated, ID: &bootstrapID,
-	}); err != nil {
+	var controlID uint16 = 0
+	control, err := pc.CreateDataChannel("_kps_control", &webrtc.DataChannelInit{
+		Negotiated: &negotiated, ID: &controlID,
+	})
+	if err != nil {
 		_ = pc.Close()
 		return nil, err
 	}
@@ -74,7 +74,7 @@ func DialWebRTC(ctx context.Context, addr string) (Conn, error) {
 		return nil, err
 	}
 
-	conn := newConn(pc)
+	conn := newConn(pc, control)
 	connected := make(chan struct{})
 	var once sync.Once
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {

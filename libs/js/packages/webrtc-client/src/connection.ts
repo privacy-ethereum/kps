@@ -14,18 +14,14 @@ import type {
 } from '@kpstreams/core'
 
 const DEFAULT_TIMEOUT = 15_000
-// Bootstrap channel: negotiated on both sides (no DCEP), so it never surfaces as
-// a server-side stream. Its only job is to force the SCTP m-line into the offer.
-const BOOTSTRAP_LABEL = '_kps_bootstrap'
-const BOOTSTRAP_ID = 0
+// Reserved control channel (SPEC §8): negotiated, reliable, ordered, fixed ID 0.
+// Created before the offer so the offer carries the SCTP m-line, and also carries
+// the CONNECTION_CLOSE message. Never surfaces as an application stream.
+const CONTROL_LABEL = '_kps_control'
+const CONTROL_ID = 0
 // Reserved datagram channel (SPEC §7/§8): negotiated, unreliable, unordered.
 const DATAGRAM_LABEL = '_kps_datagrams'
 const DATAGRAM_ID = 1
-// Reserved control channel (SPEC §8): negotiated, reliable, ordered. Carries the
-// CONNECTION_CLOSE message. (The bootstrap channel at ID 0 never opens as a
-// usable channel — it only forces the SCTP m-line — so it can't carry this.)
-const CONTROL_LABEL = '_kps_control'
-const CONTROL_ID = 2
 // Cap WebRTC datagrams to a sub-MTU size so each travels as a single unreliable
 // SCTP message (matches the Go webrtcMaxDatagram). The limit surfaces via the
 // send error; ~1100 bytes is safe on any connection.
@@ -103,13 +99,15 @@ export class Connection implements CoreConnection {
   #closeResolve!: (info: ConnCloseInfo) => void
   #closeFired = false
 
-  private constructor(pc: RTCPeerConnection) {
+  // `control` is the reserved reliable channel (ID 0) dial() created before the
+  // offer (to force the SCTP m-line); it also carries CONNECTION_CLOSE.
+  private constructor(pc: RTCPeerConnection, control: RTCDataChannel) {
     this.#pc = pc
     this.closed = new Promise<ConnCloseInfo>(res => { this.#closeResolve = res })
 
-    // Reserved control channel (SPEC §8): a message on it is a CONNECTION_CLOSE —
-    // record the peer's code as the close reason, then tear down.
-    this.#control = pc.createDataChannel(CONTROL_LABEL, { negotiated: true, id: CONTROL_ID })
+    // A message on the control channel is a CONNECTION_CLOSE — record the peer's
+    // code as the close reason, then tear down.
+    this.#control = control
     this.#control.binaryType = 'arraybuffer'
     this.#control.addEventListener('message', (e) => {
       const data = new Uint8Array((e as MessageEvent).data as ArrayBuffer)
@@ -141,7 +139,7 @@ export class Connection implements CoreConnection {
 
     pc.addEventListener('datachannel', (e: RTCDataChannelEvent) => {
       const channel = e.channel
-      if (channel.label === BOOTSTRAP_LABEL) return
+      if (channel.label === CONTROL_LABEL) return
       this.#enqueueIncoming(new Stream(channel))
     })
   }
@@ -151,10 +149,10 @@ export class Connection implements CoreConnection {
     const digest = decodeCerthash(addr.certhash)
     const pc = new RTCPeerConnection({})
 
-    // Pre-allocate the negotiated bootstrap channel so the offer carries the
-    // application m-line and SCTP comes up; it also carries CONNECTION_CLOSE
-    // (SPEC §8), so retain the handle for the Connection.
-    pc.createDataChannel(BOOTSTRAP_LABEL, { negotiated: true, id: BOOTSTRAP_ID })
+    // Pre-allocate the negotiated control channel (ID 0) before the offer so the
+    // offer carries the application m-line and SCTP comes up; it also carries
+    // CONNECTION_CLOSE (SPEC §8). Retain the handle for the Connection.
+    const control = pc.createDataChannel(CONTROL_LABEL, { negotiated: true, id: CONTROL_ID })
 
     const offer = await pc.createOffer()
     const ufrag = generateUfrag()
@@ -162,7 +160,7 @@ export class Connection implements CoreConnection {
     await pc.setLocalDescription({ type: offer.type, sdp: rewriteOfferUfrag(offer.sdp ?? '', ufrag, pwd) })
     await pc.setRemoteDescription({ type: 'answer', sdp: synthesizeAnswer(addr, ufrag, pwd) })
 
-    const conn = new Connection(pc)
+    const conn = new Connection(pc, control)
     await conn.#waitForOpen(opts.timeoutMs ?? DEFAULT_TIMEOUT, opts.signal)
     return conn
   }

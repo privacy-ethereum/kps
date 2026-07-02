@@ -333,8 +333,8 @@ func (l *Listener) spawnPC(ufrag string, clientIP netip.Addr) *pcEntry {
 
 	// newConn owns pc.OnDataChannel: each client-opened channel surfaces as a
 	// Stream on the Conn's accept queue. It also creates our side of the
-	// negotiated datagram (ID 1) and control (ID 2) channels (SPEC §8).
-	kc := newConn(pc)
+	// negotiated control (ID 0) and datagram (ID 1) channels (SPEC §8).
+	kc := newConn(pc, nil)
 
 	var acceptOnce sync.Once
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {

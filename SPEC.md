@@ -324,16 +324,15 @@ Transport mappings:
 These are implementation details, not part of the public API, and MUST NOT
 surface as application streams or be relied upon by applications:
 
-- WebRTC bootstrap data channel — negotiated, fixed ID `0`, used only to force
-  the SCTP association (and its m-line) up. It never opens as a usable data
-  channel and is never delivered as a stream.
+- WebRTC control channel — negotiated, reliable, ordered, fixed ID `0`. Both
+  peers create it (the client before the offer, which also forces the SCTP
+  association and its m-line up). It carries a single message type,
+  **CONNECTION_CLOSE**: a bare big-endian `uint32` application error code (a
+  message shorter than 4 bytes means code `0`), sent best-effort before teardown
+  — the WebRTC analogue of QUIC `CONNECTION_CLOSE`. On receipt, the peer records
+  the code as the connection's close reason and tears down. Never delivered as a
+  stream.
 - WebRTC datagram channel (§7) — negotiated, fixed ID `1`, always present.
-- WebRTC control channel — negotiated, reliable, ordered, fixed ID `2`. Both
-  peers create it. It carries a single message type, **CONNECTION_CLOSE**: a bare
-  big-endian `uint32` application error code (a message shorter than 4 bytes
-  means code `0`), sent best-effort before teardown — the WebRTC analogue of
-  QUIC `CONNECTION_CLOSE`. On receipt, the peer records the code as the
-  connection's close reason and tears down. Never delivered as a stream.
 - Any data-channel label.
 
 ---

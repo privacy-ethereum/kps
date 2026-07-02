@@ -68,7 +68,7 @@ func decodeCode(payload []byte) ErrorCode {
 }
 
 // encodeConnClose builds the WebRTC CONNECTION_CLOSE control message carried on
-// the bootstrap channel (SPEC §8): a bare big-endian uint32 application error
+// the control channel (SPEC §8): a bare big-endian uint32 application error
 // code, the WebRTC analogue of QUIC CONNECTION_CLOSE. Decode with decodeCode.
 func encodeConnClose(code ErrorCode) []byte {
 	out := make([]byte, 4)

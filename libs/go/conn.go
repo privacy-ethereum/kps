@@ -31,7 +31,11 @@ type webrtcConn struct {
 	closeErr  error
 }
 
-func newConn(pc *webrtc.PeerConnection) *webrtcConn {
+// newConn wraps a connected PeerConnection. `control` is the reserved reliable
+// channel (ID 0): the client passes the one it created pre-offer (to force the
+// SCTP m-line); the server passes nil and newConn creates its side. It carries
+// CONNECTION_CLOSE (SPEC §8).
+func newConn(pc *webrtc.PeerConnection, control *webrtc.DataChannel) *webrtcConn {
 	c := &webrtcConn{
 		pc:       pc,
 		streamCh: make(chan *webrtcStream, 16),
@@ -47,7 +51,7 @@ func newConn(pc *webrtc.PeerConnection) *webrtcConn {
 		}
 	})
 	c.openDatagramChannel()
-	c.openControlChannel()
+	c.setupControlChannel(control)
 	return c
 }
 
@@ -79,23 +83,26 @@ func (c *webrtcConn) openDatagramChannel() {
 	})
 }
 
-// openControlChannel reserves the reliable, ordered control channel (SPEC §8):
-// negotiated on both sides at fixed ID 2. Its only message is CONNECTION_CLOSE
-// (a big-endian uint32 code) — the WebRTC analogue of QUIC CONNECTION_CLOSE.
-// (The bootstrap channel at ID 0 only forces the SCTP m-line and never opens as
-// a usable data channel, so it can't carry this.)
-func (c *webrtcConn) openControlChannel() {
-	negotiated := true
-	var id uint16 = 2
-	dc, err := c.pc.CreateDataChannel("_kps_control", &webrtc.DataChannelInit{
-		Negotiated: &negotiated,
-		ID:         &id,
-	})
-	if err != nil {
-		return
+// setupControlChannel wires the reserved reliable channel (SPEC §8, negotiated,
+// fixed ID 0). The client already created it before the offer (to force the SCTP
+// m-line) and passes it in; the server passes nil and we create our side here.
+// Its only message is CONNECTION_CLOSE (a big-endian uint32 code) — the WebRTC
+// analogue of QUIC CONNECTION_CLOSE.
+func (c *webrtcConn) setupControlChannel(control *webrtc.DataChannel) {
+	if control == nil {
+		negotiated := true
+		var id uint16 = 0
+		dc, err := c.pc.CreateDataChannel("_kps_control", &webrtc.DataChannelInit{
+			Negotiated: &negotiated,
+			ID:         &id,
+		})
+		if err != nil {
+			return
+		}
+		control = dc
 	}
-	c.control = dc
-	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+	c.control = control
+	control.OnMessage(func(msg webrtc.DataChannelMessage) {
 		code := decodeCode(msg.Data)
 		if code != CodeNone {
 			c.markClosed(&StreamError{Code: code, Remote: true})
