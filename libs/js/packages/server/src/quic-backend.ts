@@ -6,11 +6,18 @@
 // @infisical/quic is CommonJS with non-statically-analyzable exports, so ESM
 // named imports fail at runtime — default-import the module and destructure.
 import quicPkg from '@infisical/quic'
+import loggerPkg from '@matrixai/logger'
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { Connection as CoreConnection } from '@kpstreams/core'
 import { QuicConnection } from './quic-connection.js'
 import type { Identity } from './identity.js'
+
+// @matrixai/quic logs at INFO by default (straight to the app's console). A
+// networking library shouldn't spam the host process, so run it at WARN.
+const Logger = (loggerPkg as { default: new (name: string, level: number) => unknown }).default
+const LogLevel = (loggerPkg as unknown as { LogLevel: { WARN: number } }).LogLevel
+function quietLogger(name: string): unknown { return new Logger(name, LogLevel.WARN) }
 
 const { QUICServer, events: quicEvents } = quicPkg as unknown as {
   QUICServer: new (opts: unknown) => {
@@ -59,6 +66,7 @@ export async function startQUICBackend(args: {
   // options loosely (the runtime shape is what matters).
   const serverOpts = {
     crypto: serverCrypto,
+    logger: quietLogger('@kpstreams/server:quic'),
     config: {
       key: keyPem,
       cert: certPem,

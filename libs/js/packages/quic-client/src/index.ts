@@ -7,9 +7,15 @@
 // @kpstreams/server (copied for now; a shared package could dedupe them).
 
 import quicPkg from '@infisical/quic'
+import loggerPkg from '@matrixai/logger'
 import { randomFillSync, createHash, timingSafeEqual } from 'node:crypto'
 import { parseAddress, decodeCerthash, type Connection, type DialOptions } from '@kpstreams/core'
 import { QuicConnection } from './quic-connection.js'
+
+// @matrixai/quic logs at INFO by default (straight to the app's console); run it
+// at WARN so dialing doesn't spam the host process.
+const Logger = (loggerPkg as { default: new (name: string, level: number) => unknown }).default
+const LogLevel = (loggerPkg as unknown as { LogLevel: { WARN: number } }).LogLevel
 
 export { parseAddress, formatAddress } from '@kpstreams/core'
 export type { Address, Connection, Stream, DialOptions } from '@kpstreams/core'
@@ -45,6 +51,7 @@ export async function dial(addr: string, opts: DialOptions = {}): Promise<Connec
       host: a.ip,
       port: a.port,
       crypto: clientCrypto,
+      logger: new Logger('@kpstreams/quic-client', LogLevel.WARN),
       config: {
         applicationProtos: ['h3'],
         verifyPeer: true,

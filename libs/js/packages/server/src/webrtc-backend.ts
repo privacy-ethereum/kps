@@ -13,6 +13,16 @@ export interface WebRTCBackend {
   close(): void
 }
 
+// RFC 8839 ice-char: ALPHA / DIGIT / "+" / "/". A ufrag with any other byte
+// (e.g. base64url's '-'/'_') makes libdatachannel throw "Invalid ICE attributes"
+// from setLocalDescription — an UNCATCHABLE C++ throw that aborts the whole
+// process (same class as murat-dogan/node-datachannel#427). A malformed ufrag
+// therefore has to be rejected BEFORE it reaches the native layer, or any peer
+// (buggy or hostile) could crash the server. Length is bounded per RFC 8839
+// (4..256 chars).
+const ICE_UFRAG_RE = /^[A-Za-z0-9+/]{4,256}$/
+
+
 export function startWebRTCBackend(args: {
   identity: Identity
   host: string
@@ -26,6 +36,9 @@ export function startWebRTCBackend(args: {
 
   mux.onUnhandledStunRequest(async (req: IceUdpMuxRequest) => {
     if (closed || !req.ufrag || peers.has(req.ufrag)) return
+    // Reject an out-of-charset ufrag up front: passing it to setLocalDescription
+    // would abort the process (see ICE_UFRAG_RE). Drop the STUN instead.
+    if (!ICE_UFRAG_RE.test(req.ufrag)) return
     const ufrag = req.ufrag
 
     // Claim the ufrag SYNCHRONOUSLY before any await. STUN is retransmitted, so
@@ -63,10 +76,13 @@ export function startWebRTCBackend(args: {
 
   return {
     close() {
+      // `closed = true` first makes onUnhandledStunRequest a no-op, so no new PC
+      // is built from an in-flight STUN; then tear down the per-peer PCs before
+      // stopping the mux.
       closed = true
-      try { mux.stop() } catch { /* ignore */ }
       for (const pc of peers.values()) { try { pc.close() } catch { /* ignore */ } }
       peers.clear()
+      try { mux.stop() } catch { /* ignore */ }
     },
   }
 }

@@ -3,7 +3,7 @@ package kps
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync"
@@ -94,12 +94,16 @@ func DialWebRTC(ctx context.Context, addr string) (Conn, error) {
 	}
 }
 
+// randUfrag returns a random ICE ufrag (~72 bits), hex-encoded. Hex keeps it
+// within the RFC 8839 ice-char set (ALPHA / DIGIT); base64url's '-'/'_' are NOT
+// valid ice-chars and are rejected by strict stacks like libdatachannel (pion
+// and browsers are lenient). Matches the JS client's generateUfrag.
 func randUfrag() (string, error) {
 	b := make([]byte, 9)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	return hex.EncodeToString(b), nil
 }
 
 func digestToFingerprint(d []byte) string {

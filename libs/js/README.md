@@ -46,6 +46,31 @@ npm run build        # builds core first, then the rest
 Each package builds with `tsc` to its own `dist/`; `@kpstreams/core` must build
 before the packages that depend on it (the root `build` script orders this).
 
+## Testing
+
+```sh
+npm test                   # unit tests for @kpstreams/core (pure, fast, no native deps)
+npm run test:integration   # builds, then runs the node:test integration matrix
+```
+
+`test:integration` exercises the packages end-to-end against real transports
+(`libs/js/test/integration/`):
+
+- **QUIC** — `@kpstreams/quic-client` ↔ `@kpstreams/server`: echo, many concurrent
+  streams, multi-MiB backpressure, datagrams, certhash-pinning rejection, abort.
+- **Cross-impl** — `@kpstreams/quic-client` → Go server, and the Go client
+  (`libs/go/cmd/dial`, QUIC + WebRTC) → `@kpstreams/server`.
+- **Single public port** — QUIC and WebRTC clients coexisting on one server port.
+
+It needs the `go` toolchain (cross-impl legs skip cleanly without it) and real
+UDP socket access (no restrictive seccomp). It runs each file in its own
+force-exiting process because the node-datachannel WebRTC backend holds native
+threads that otherwise block a clean exit.
+
+The **browser** WebRTC leg (a real Chromium page running `@kpstreams/webrtc-client`
+against both the Go and JS servers) lives in [`tests/interop`](../../tests/interop)
+and runs under Playwright. Go↔Go coverage lives in `libs/go`.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
