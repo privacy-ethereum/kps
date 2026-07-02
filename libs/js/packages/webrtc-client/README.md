@@ -31,7 +31,8 @@ await writer.close()                 // half-close; peer sees EOF
 for await (const chunk of stream.readable as any) { /* ... */ }
 
 // unreliable datagrams (≤ ~1100 bytes is safe; oversized send rejects 'too-large')
-await conn.datagrams.send(new Uint8Array([1, 2, 3]))
+await conn.sendDatagram(new Uint8Array([1, 2, 3]))
+// const dg = await conn.receiveDatagram()            // next inbound datagram
 
 await conn.close()
 ```
@@ -48,8 +49,10 @@ const stream = await openStream('203.0.113.5:41108:uEiD...')
 
 - `dial(addr, opts?): Promise<Connection>` — `opts: { signal?, timeoutMs? }` (default 15 s).
 - `openStream(addr, opts?): Promise<Stream>` — one-shot; closing the stream closes the connection.
-- `Connection` / `Stream` classes implementing the [`@kpstreams/core`](https://www.npmjs.com/package/@kpstreams/core) contract.
-- `parseAddress` / `formatAddress` re-exported from core for convenience.
+- `parseAddress` / `formatAddress` re-exported from core for convenience, plus the
+  `Connection` / `Stream` / `DialOptions` types. (Identical surface to
+  [`@kpstreams/quic-client`](https://www.npmjs.com/package/@kpstreams/quic-client) —
+  same job, different transport.)
 
 Built on the browser's `RTCPeerConnection` (and `crypto.subtle`), so it runs in a
 secure context (https / localhost). A Node WebRTC client is a separate future

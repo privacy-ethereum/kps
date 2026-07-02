@@ -3,10 +3,13 @@
 // are unnamed; the data-channel label is a non-semantic implementation detail.
 
 import { parseAddress, decodeCerthash } from '@kpstreams/core'
-import { generateUfrag, deriveICEPwd, rewriteOfferUfrag, synthesizeAnswer } from '@kpstreams/core/webrtc'
+import {
+  generateUfrag, deriveICEPwd, rewriteOfferUfrag, synthesizeAnswer,
+  encodeConnClose, readConnCloseCode, numToCode,
+} from '@kpstreams/core/webrtc'
 import { Stream } from './stream.js'
 import type {
-  KpsReason, Datagrams, DialOptions, ConnCloseInfo,
+  KpsReason, DialOptions, ConnCloseInfo,
   Connection as CoreConnection,
 } from '@kpstreams/core'
 
@@ -18,6 +21,11 @@ const BOOTSTRAP_ID = 0
 // Reserved datagram channel (SPEC §7/§8): negotiated, unreliable, unordered.
 const DATAGRAM_LABEL = '_kps_datagrams'
 const DATAGRAM_ID = 1
+// Reserved control channel (SPEC §8): negotiated, reliable, ordered. Carries the
+// CONNECTION_CLOSE message. (The bootstrap channel at ID 0 never opens as a
+// usable channel — it only forces the SCTP m-line — so it can't carry this.)
+const CONTROL_LABEL = '_kps_control'
+const CONTROL_ID = 2
 // Cap WebRTC datagrams to a sub-MTU size so each travels as a single unreliable
 // SCTP message (matches the Go webrtcMaxDatagram). The limit surfaces via the
 // send error; ~1100 bytes is safe on any connection.
@@ -27,33 +35,28 @@ function bytesToArrayBuffer(u8: Uint8Array): ArrayBuffer {
   return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer
 }
 
-// makeDatagrams backs the Datagrams API with the reserved unreliable channel.
-// Inbound datagrams use a bounded buffer (drop-oldest when full); delivery is
-// best-effort.
-function makeDatagrams(dg: RTCDataChannel): Datagrams {
+// makeDatagramChannel backs the flat sendDatagram/receiveDatagram API with the
+// reserved unreliable channel. Inbound datagrams use a bounded buffer (drop-
+// oldest when full); delivery is best-effort. `receive` is pull-based (one
+// datagram per call), mirroring Go's ReceiveDatagram(ctx).
+function makeDatagramChannel(dg: RTCDataChannel) {
   dg.binaryType = 'arraybuffer'
   const MAXQ = 256
   const queue: Uint8Array[] = []
-  let waiter: ((v: Uint8Array) => void) | null = null
+  const waiters: Array<(v: Uint8Array) => void> = []
+  let closedErr: Error | null = null
+  const rejecters: Array<(e: Error) => void> = []
   dg.addEventListener('message', (e) => {
     const raw = (e as MessageEvent).data as ArrayBuffer | string
     const data = typeof raw === 'string' ? new TextEncoder().encode(raw) : new Uint8Array(raw)
-    if (waiter) { const w = waiter; waiter = null; w(data); return }
+    const w = waiters.shift()
+    if (w) { rejecters.shift(); w(data); return }
     queue.push(data)
     if (queue.length > MAXQ) queue.shift() // drop-oldest
   })
-  const incoming = new ReadableStream<Uint8Array>({
-    pull(controller) {
-      const next = queue.shift()
-      if (next) { controller.enqueue(next); return }
-      return new Promise<void>(resolve => {
-        waiter = (v) => { try { controller.enqueue(v) } catch { /* reader cancelled */ } ; resolve() }
-      })
-    },
-    cancel() { waiter = null; queue.length = 0 },
-  })
   return {
-    async send(data: Uint8Array) {
+    async send(data: Uint8Array, opts?: { signal?: AbortSignal }) {
+      if (opts?.signal?.aborted) throw new Error('kps: sendDatagram aborted')
       if (data.length > WEBRTC_MAX_DATAGRAM) {
         const e = new Error(`kps: datagram exceeds limit (max ${WEBRTC_MAX_DATAGRAM} bytes)`)
         Object.assign(e, { code: 'too-large', maxDatagramPayloadSize: WEBRTC_MAX_DATAGRAM })
@@ -62,16 +65,38 @@ function makeDatagrams(dg: RTCDataChannel): Datagrams {
       if (dg.readyState !== 'open') throw new Error('kps: datagram channel not open')
       dg.send(bytesToArrayBuffer(data))
     },
-    incoming
+    receive(opts?: { signal?: AbortSignal }): Promise<Uint8Array> {
+      const next = queue.shift()
+      if (next) return Promise.resolve(next)
+      if (closedErr) return Promise.reject(closedErr)
+      if (opts?.signal?.aborted) return Promise.reject(new Error('kps: receiveDatagram aborted'))
+      return new Promise<Uint8Array>((resolve, reject) => {
+        const w = (v: Uint8Array) => { opts?.signal?.removeEventListener('abort', onAbort); resolve(v) }
+        const rej = (e: Error) => { opts?.signal?.removeEventListener('abort', onAbort); reject(e) }
+        const onAbort = () => {
+          const i = waiters.indexOf(w)
+          if (i >= 0) { waiters.splice(i, 1); rejecters.splice(i, 1) }
+          reject(new Error('kps: receiveDatagram aborted'))
+        }
+        waiters.push(w); rejecters.push(rej)
+        opts?.signal?.addEventListener('abort', onAbort, { once: true })
+      })
+    },
+    // Fail any pending receivers when the connection goes away.
+    close(err: Error) {
+      closedErr = err
+      while (rejecters.length) { waiters.shift(); rejecters.shift()!(err) }
+    },
   }
 }
 
 export class Connection implements CoreConnection {
   readonly closed: Promise<ConnCloseInfo>
-  readonly datagrams: Datagrams
-  state: 'connecting' | 'open' | 'closed' = 'connecting'
 
   #pc: RTCPeerConnection
+  #control!: RTCDataChannel
+  #dg: ReturnType<typeof makeDatagramChannel>
+  #state: 'connecting' | 'open' | 'closed' = 'connecting'
   #streamSeq = 0
   #incoming: Stream[] = []
   #acceptWaiters: Array<{ resolve: (s: Stream) => void; reject: (e: Error) => void }> = []
@@ -82,20 +107,32 @@ export class Connection implements CoreConnection {
     this.#pc = pc
     this.closed = new Promise<ConnCloseInfo>(res => { this.#closeResolve = res })
 
+    // Reserved control channel (SPEC §8): a message on it is a CONNECTION_CLOSE —
+    // record the peer's code as the close reason, then tear down.
+    this.#control = pc.createDataChannel(CONTROL_LABEL, { negotiated: true, id: CONTROL_ID })
+    this.#control.binaryType = 'arraybuffer'
+    this.#control.addEventListener('message', (e) => {
+      const data = new Uint8Array((e as MessageEvent).data as ArrayBuffer)
+      const n = readConnCloseCode(data)
+      const reason = n === 0 ? undefined : { code: numToCode(n) ?? 'internal-error' as const }
+      this.#fireClose({ ok: n === 0, reason })
+      try { this.#pc.close() } catch { /* ignore */ }
+    })
+
     // Reserved datagram channel — negotiated on both sides, so it carries
     // datagrams without DCEP and never surfaces as an application stream.
-    this.datagrams = makeDatagrams(pc.createDataChannel(DATAGRAM_LABEL, {
+    this.#dg = makeDatagramChannel(pc.createDataChannel(DATAGRAM_LABEL, {
       negotiated: true, id: DATAGRAM_ID, ordered: false, maxRetransmits: 0
     }))
 
     pc.addEventListener('connectionstatechange', () => {
       const s = pc.connectionState
-      if (s === 'connected' && this.state === 'connecting') {
-        this.state = 'open'
+      if (s === 'connected' && this.#state === 'connecting') {
+        this.#state = 'open'
       } else if (s === 'failed') {
         this.#fireClose({ ok: false, reason: { code: 'network-error', message: 'peer connection failed' } })
       } else if (s === 'closed') {
-        this.#fireClose({ ok: this.state !== 'connecting' })
+        this.#fireClose({ ok: this.#state !== 'connecting' })
       }
       // 'disconnected' is transient (a packet-loss blip that often recovers to
       // 'connected'); don't tear down. If it doesn't recover, the state machine
@@ -115,7 +152,8 @@ export class Connection implements CoreConnection {
     const pc = new RTCPeerConnection({})
 
     // Pre-allocate the negotiated bootstrap channel so the offer carries the
-    // application m-line and SCTP comes up.
+    // application m-line and SCTP comes up; it also carries CONNECTION_CLOSE
+    // (SPEC §8), so retain the handle for the Connection.
     pc.createDataChannel(BOOTSTRAP_LABEL, { negotiated: true, id: BOOTSTRAP_ID })
 
     const offer = await pc.createOffer()
@@ -132,7 +170,7 @@ export class Connection implements CoreConnection {
   // Open a new unnamed bidirectional byte stream.
   async openStream(opts: { signal?: AbortSignal } = {}): Promise<Stream> {
     if (opts.signal?.aborted) throw new Error('kps: openStream aborted')
-    if (this.state !== 'open') throw new Error(`kps: connection is ${this.state}`)
+    if (this.#state !== 'open') throw new Error(`kps: connection is ${this.#state}`)
     const label = `kps-${++this.#streamSeq}`
     const channel = this.#pc.createDataChannel(label)
     return await new Promise<Stream>((resolve, reject) => {
@@ -156,7 +194,7 @@ export class Connection implements CoreConnection {
     const ready = this.#incoming.shift()
     if (ready) return Promise.resolve(ready)
     if (opts.signal?.aborted) return Promise.reject(new Error('kps: acceptStream aborted'))
-    if (this.state === 'closed') return Promise.reject(new Error('kps: connection is closed'))
+    if (this.#state === 'closed') return Promise.reject(new Error('kps: connection is closed'))
     const signal = opts.signal
     return new Promise<Stream>((resolve, reject) => {
       let waiter: { resolve: (s: Stream) => void; reject: (e: Error) => void }
@@ -176,9 +214,36 @@ export class Connection implements CoreConnection {
   }
 
   async close(reason?: KpsReason): Promise<void> {
-    if (this.state === 'closed') return
+    if (this.#state === 'closed') return
+    // Best-effort CONNECTION_CLOSE to the peer before teardown (SPEC §8). The
+    // control channel opens asynchronously, so a close right after dial can beat
+    // it; wait briefly for it to open, then send.
+    await this.#sendConnClose(reason)
     this.#pc.close()
     this.#fireClose({ ok: true, reason })
+  }
+
+  async #sendConnClose(reason?: KpsReason): Promise<void> {
+    const c = this.#control
+    if (c.readyState === 'connecting') {
+      await new Promise<void>((resolve) => {
+        const done = () => { c.removeEventListener('open', done); clearTimeout(t); resolve() }
+        const t = setTimeout(done, 250)
+        c.addEventListener('open', done, { once: true })
+      })
+    }
+    if (c.readyState === 'open') {
+      try { c.send(bytesToArrayBuffer(encodeConnClose(reason?.code))) } catch { /* ignore */ }
+    }
+  }
+
+  // Datagrams (SPEC §7) — unreliable, unordered, best-effort.
+  sendDatagram(data: Uint8Array, opts?: { signal?: AbortSignal }): Promise<void> {
+    return this.#dg.send(data, opts)
+  }
+
+  receiveDatagram(opts?: { signal?: AbortSignal }): Promise<Uint8Array> {
+    return this.#dg.receive(opts)
   }
 
   #enqueueIncoming(stream: Stream): void {
@@ -189,7 +254,7 @@ export class Connection implements CoreConnection {
 
   #waitForOpen(timeoutMs: number, signal?: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
-      if (this.state === 'open') return resolve()
+      if (this.#state === 'open') return resolve()
       const timer = setTimeout(() => {
         cleanup(); try { this.#pc.close() } catch {}
         reject(new Error(`kps: dial timed out after ${timeoutMs}ms`))
@@ -212,7 +277,8 @@ export class Connection implements CoreConnection {
   #fireClose(info: ConnCloseInfo): void {
     if (this.#closeFired) return
     this.#closeFired = true
-    this.state = 'closed'
+    this.#state = 'closed'
+    this.#dg.close(new Error('kps: connection closed'))
     for (const w of this.#acceptWaiters) w.reject(new Error('kps: connection closed'))
     this.#acceptWaiters = []
     this.#closeResolve(info)

@@ -39,11 +39,12 @@ The contract in one glance:
 ```ts
 interface Connection {
   readonly closed: Promise<ConnCloseInfo>
-  readonly datagrams: Datagrams
-  readonly state: 'connecting' | 'open' | 'closed'
   openStream(opts?: OpenStreamOptions): Promise<Stream>
   acceptStream(opts?: AcceptStreamOptions): Promise<Stream>
   close(reason?: KpsReason): Promise<void>
+  // datagrams (§7) — flat, mirrors Go's SendDatagram/ReceiveDatagram
+  sendDatagram(data: Uint8Array, opts?: { signal?: AbortSignal }): Promise<void>
+  receiveDatagram(opts?: { signal?: AbortSignal }): Promise<Uint8Array>
 }
 
 interface Stream {                  // an unnamed, reliable, ordered byte stream

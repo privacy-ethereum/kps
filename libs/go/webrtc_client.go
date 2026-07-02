@@ -47,7 +47,8 @@ func DialWebRTC(ctx context.Context, addr string) (Conn, error) {
 
 	// Pre-allocate the negotiated bootstrap channel so the offer carries the
 	// application m-line; it is not announced via DCEP and never surfaces as a
-	// stream.
+	// stream. (It never opens as a usable channel — CONNECTION_CLOSE rides the
+	// control channel at ID 2, opened in newConn; see SPEC §8.)
 	negotiated := true
 	var bootstrapID uint16 = 0
 	if _, err := pc.CreateDataChannel("_kps_bootstrap", &webrtc.DataChannelInit{

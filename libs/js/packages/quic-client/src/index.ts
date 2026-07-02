@@ -9,7 +9,7 @@
 import quicPkg from '@infisical/quic'
 import loggerPkg from '@matrixai/logger'
 import { randomFillSync, createHash, timingSafeEqual } from 'node:crypto'
-import { parseAddress, decodeCerthash, type Connection, type DialOptions } from '@kpstreams/core'
+import { parseAddress, decodeCerthash, type Connection, type Stream, type DialOptions } from '@kpstreams/core'
 import { QuicConnection } from './quic-connection.js'
 
 // @matrixai/quic logs at INFO by default (straight to the app's console); run it
@@ -17,8 +17,15 @@ import { QuicConnection } from './quic-connection.js'
 const Logger = (loggerPkg as { default: new (name: string, level: number) => unknown }).default
 const LogLevel = (loggerPkg as unknown as { LogLevel: { WARN: number } }).LogLevel
 
+// Convenience re-exports so callers don't also need to import @kpstreams/core.
+// (Kept identical to @kpstreams/webrtc-client — same job, same surface.)
 export { parseAddress, formatAddress } from '@kpstreams/core'
-export type { Address, Connection, Stream, DialOptions } from '@kpstreams/core'
+export type {
+  Address, Connection, Stream,
+  DialOptions, OpenStreamOptions,
+  ConnCloseInfo, StreamCloseInfo,
+  KpsErrorCode, KpsReason,
+} from '@kpstreams/core'
 
 const { QUICClient } = quicPkg as unknown as {
   QUICClient: {
@@ -72,4 +79,19 @@ export async function dial(addr: string, opts: DialOptions = {}): Promise<Connec
   // Tearing down the connection must also close the client's UDP socket.
   conn.closed.finally(() => { client.destroy({ force: true }).catch(() => {}) }).catch(() => {})
   return conn
+}
+
+// One-shot convenience over dial → openStream. The returned stream owns the
+// hidden connection: closing the stream closes the connection. Mirrors
+// @kpstreams/webrtc-client's openStream.
+export async function openStream(addr: string, opts?: DialOptions): Promise<Stream> {
+  const conn = await dial(addr, opts)
+  try {
+    const stream = await conn.openStream({ signal: opts?.signal })
+    void stream.closed.finally(() => { void conn.close() })
+    return stream
+  } catch (err) {
+    await conn.close()
+    throw err
+  }
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pion/webrtc/v4"
 )
@@ -22,6 +23,8 @@ type webrtcConn struct {
 
 	dgChan  *webrtc.DataChannel
 	dgInbox chan []byte
+
+	control *webrtc.DataChannel // reserved reliable channel (ID 2): CONNECTION_CLOSE
 
 	closeOnce sync.Once
 	closedCh  chan struct{}
@@ -44,6 +47,7 @@ func newConn(pc *webrtc.PeerConnection) *webrtcConn {
 		}
 	})
 	c.openDatagramChannel()
+	c.openControlChannel()
 	return c
 }
 
@@ -72,6 +76,33 @@ func (c *webrtcConn) openDatagramChannel() {
 		default:
 			// bounded buffer: drop when full (datagrams are best-effort)
 		}
+	})
+}
+
+// openControlChannel reserves the reliable, ordered control channel (SPEC §8):
+// negotiated on both sides at fixed ID 2. Its only message is CONNECTION_CLOSE
+// (a big-endian uint32 code) — the WebRTC analogue of QUIC CONNECTION_CLOSE.
+// (The bootstrap channel at ID 0 only forces the SCTP m-line and never opens as
+// a usable data channel, so it can't carry this.)
+func (c *webrtcConn) openControlChannel() {
+	negotiated := true
+	var id uint16 = 2
+	dc, err := c.pc.CreateDataChannel("_kps_control", &webrtc.DataChannelInit{
+		Negotiated: &negotiated,
+		ID:         &id,
+	})
+	if err != nil {
+		return
+	}
+	c.control = dc
+	dc.OnMessage(func(msg webrtc.DataChannelMessage) {
+		code := decodeCode(msg.Data)
+		if code != CodeNone {
+			c.markClosed(&StreamError{Code: code, Remote: true})
+		} else {
+			c.markClosed(nil)
+		}
+		_ = c.pc.Close()
 	})
 }
 
@@ -121,7 +152,46 @@ func (c *webrtcConn) Close() error {
 	return c.pc.Close()
 }
 
+// CloseWithError closes the connection, conveying an application error code to
+// the peer as a best-effort CONNECTION_CLOSE on the control channel (SPEC §8)
+// before teardown — the WebRTC analogue of QUIC CONNECTION_CLOSE. Delivery isn't
+// guaranteed (teardown may race), matching QUIC's single-packet close.
+func (c *webrtcConn) CloseWithError(code ErrorCode) error {
+	if c.control != nil {
+		// The control channel opens asynchronously after the PC connects; a close
+		// right after dial can beat it. Wait briefly for it to open, send, then
+		// let the reliable message flush before tearing down SCTP (pc.Close()
+		// aborts in-flight data). All bounded so close stays prompt.
+		openBy := time.Now().Add(250 * time.Millisecond)
+		for c.control.ReadyState() == webrtc.DataChannelStateConnecting && time.Now().Before(openBy) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		if c.control.ReadyState() == webrtc.DataChannelStateOpen {
+			_ = c.control.Send(encodeConnClose(code))
+			flushBy := time.Now().Add(250 * time.Millisecond)
+			for c.control.BufferedAmount() > 0 && time.Now().Before(flushBy) {
+				time.Sleep(5 * time.Millisecond)
+			}
+		}
+	}
+	if code != CodeNone {
+		c.markClosed(&StreamError{Code: code})
+	} else {
+		c.markClosed(nil)
+	}
+	return c.pc.Close()
+}
+
 func (c *webrtcConn) Closed() <-chan struct{} { return c.closedCh }
+
+func (c *webrtcConn) Err() error {
+	select {
+	case <-c.closedCh:
+		return c.closeErr
+	default:
+		return nil // still open
+	}
+}
 
 func (c *webrtcConn) markClosed(err error) {
 	c.closeOnce.Do(func() {

@@ -29,8 +29,16 @@ type Conn interface {
 	AcceptStream(ctx context.Context) (Stream, error)
 	// Close tears down the connection and invalidates all its streams.
 	Close() error
+	// CloseWithError tears down the connection, conveying an error code to the
+	// peer where the transport supports it (QUIC CONNECTION_CLOSE; a no-op code
+	// on WebRTC). Mirrors the JS client's close(reason).
+	CloseWithError(code ErrorCode) error
 	// Closed is closed when the connection ends.
 	Closed() <-chan struct{}
+	// Err reports why the connection closed: nil while open or after a clean
+	// close, non-nil otherwise. Best-effort — a reason is only available where
+	// the transport carries one (QUIC), so WebRTC failures surface generically.
+	Err() error
 
 	// Datagrams are unreliable, unordered, size-limited messages available on
 	// every connection (SPEC §7). There is a per-connection size limit; an
@@ -56,4 +64,12 @@ type Stream interface {
 	ResetWrite(code ErrorCode) error
 	// Close tears down both halves of the stream.
 	Close() error
+	// CloseWithError tears down both halves, conveying an error code to the peer
+	// (reset write + stop-sending read). Mirrors the JS stream's close(reason).
+	CloseWithError(code ErrorCode) error
+	// Closed is closed when the stream ends (either half torn down or peer gone).
+	Closed() <-chan struct{}
+	// Err reports why the stream closed: nil while open or after a clean close,
+	// non-nil otherwise (best-effort, transport-dependent).
+	Err() error
 }

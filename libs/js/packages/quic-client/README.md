@@ -27,8 +27,17 @@ await writer.write(new TextEncoder().encode('hello'))
 await writer.close()
 for await (const chunk of stream.readable as any) { /* ... */ }
 
-await conn.datagrams.send(new Uint8Array([1, 2, 3]))   // unreliable
+await conn.sendDatagram(new Uint8Array([1, 2, 3]))     // unreliable
+// const dg = await conn.receiveDatagram()             // next inbound datagram
 await conn.close()                                     // also closes the QUIC socket
+```
+
+One-shot convenience — dial, open one stream, and tie the connection's lifetime
+to it (mirrors `@kpstreams/webrtc-client`):
+
+```ts
+import { openStream } from '@kpstreams/quic-client'
+const stream = await openStream('203.0.113.5:41108:uEiD...')
 ```
 
 ## How trust works

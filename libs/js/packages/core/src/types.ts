@@ -27,15 +27,6 @@ export interface StreamCloseInfo {
   reason?: KpsReason
 }
 
-// Datagrams (SPEC §7) — always present on a connection. Unreliable, unordered;
-// there is a per-connection size limit (oversized send rejects with an error
-// carrying `code: 'too-large'` and `maxDatagramPayloadSize`). Payloads up to
-// ~1100 bytes are safe on every connection.
-export interface Datagrams {
-  send(data: Uint8Array, opts?: { signal?: AbortSignal }): Promise<void>
-  readonly incoming: ReadableStream<Uint8Array>
-}
-
 // Stream — an unnamed, bidirectional, reliable, ordered byte stream (SPEC §6).
 export interface Stream {
   readonly readable: ReadableStream<Uint8Array>
@@ -54,9 +45,15 @@ export interface Stream {
 // Connection — a kps session to a single server (SPEC §4).
 export interface Connection {
   readonly closed: Promise<ConnCloseInfo>
-  readonly datagrams: Datagrams
-  readonly state: 'connecting' | 'open' | 'closed'
   openStream(opts?: OpenStreamOptions): Promise<Stream>
   acceptStream(opts?: AcceptStreamOptions): Promise<Stream>
   close(reason?: KpsReason): Promise<void>
+
+  // Datagrams (SPEC §7) — always available. Unreliable, unordered, best-effort.
+  // `sendDatagram` rejects an oversized payload with an error carrying
+  // `code: 'too-large'` and `maxDatagramPayloadSize`; payloads up to ~1100 bytes
+  // are safe on every connection. `receiveDatagram` resolves with the next
+  // inbound datagram (mirrors Go's SendDatagram/ReceiveDatagram).
+  sendDatagram(data: Uint8Array, opts?: { signal?: AbortSignal }): Promise<void>
+  receiveDatagram(opts?: { signal?: AbortSignal }): Promise<Uint8Array>
 }

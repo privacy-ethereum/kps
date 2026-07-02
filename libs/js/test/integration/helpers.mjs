@@ -88,12 +88,10 @@ function handleConn(conn) {
   })()
   // Echo datagrams (best-effort; SPEC §7).
   ;(async () => {
-    const reader = conn.datagrams.incoming.getReader()
     try {
       for (;;) {
-        const { value, done } = await reader.read()
-        if (done) break
-        if (value) await conn.datagrams.send(value).catch(() => {})
+        const value = await conn.receiveDatagram()
+        if (value) await conn.sendDatagram(value).catch(() => {})
       }
     } catch { /* connection closed */ }
   })()

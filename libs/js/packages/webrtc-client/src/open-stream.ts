@@ -1,6 +1,5 @@
 import { dial } from './connection.js'
-import type { DialOptions } from '@kpstreams/core'
-import type { Stream } from './stream.js'
+import type { DialOptions, Stream } from '@kpstreams/core'
 
 // One-shot convenience over dial → openStream. The returned stream owns the
 // hidden connection: closing the stream closes the connection (SPEC / API doc).

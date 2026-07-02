@@ -59,6 +59,21 @@ export function encodeCode(type: number, code: number): Uint8Array {
   return out
 }
 
+// WebRTC CONNECTION_CLOSE (SPEC §8): a bare big-endian uint32 application error
+// code carried on the bootstrap channel before teardown — the WebRTC analogue of
+// QUIC CONNECTION_CLOSE. `encodeConnClose` builds it from a reason code;
+// `readConnCloseCode` reads the raw uint32 (0 = no specific reason / clean).
+export function encodeConnClose(code?: KpsErrorCode): Uint8Array {
+  const out = new Uint8Array(4)
+  new DataView(out.buffer).setUint32(0, codeToNum(code), false)
+  return out
+}
+
+export function readConnCloseCode(data: Uint8Array): number {
+  if (data.length < 4) return 0
+  return new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(0, false)
+}
+
 export interface Frame {
   type: number
   payload: Uint8Array

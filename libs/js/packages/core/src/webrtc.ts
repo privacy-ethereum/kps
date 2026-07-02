@@ -7,6 +7,7 @@
 export {
   FRAME_DATA, FRAME_FIN, FRAME_RESET, FRAME_STOP_SENDING, MAX_FRAME_PAYLOAD,
   encodeData, encodeFin, encodeCode, decodeFrame, codeToNum, numToCode,
+  encodeConnClose, readConnCloseCode,
   type Frame,
 } from './framing.js'
 export { digestToSdpFingerprint } from './certhash.js'

@@ -51,17 +51,16 @@ test('large payload round-trips byte-exact (backpressure)', async () => {
 test('datagram round-trip', async () => {
   const conn = await dial(server.address)
   try {
-    const reader = conn.datagrams.incoming.getReader()
     const payload = enc('ping-datagram')
     // Best-effort transport: retry a few times to avoid a flaky drop.
     let got
     for (let attempt = 0; attempt < 5 && !got; attempt++) {
-      await conn.datagrams.send(payload)
-      const race = await Promise.race([
-        reader.read(),
-        new Promise((res) => setTimeout(() => res(null), 500)),
-      ])
-      if (race && race.value) got = race.value
+      await conn.sendDatagram(payload)
+      const ac = new AbortController()
+      const timer = setTimeout(() => ac.abort(), 500)
+      try { got = await conn.receiveDatagram({ signal: ac.signal }) }
+      catch { /* timed out this attempt */ }
+      finally { clearTimeout(timer) }
     }
     assert.ok(got, 'expected an echoed datagram within retries')
     assert.equal(dec(got), 'ping-datagram')

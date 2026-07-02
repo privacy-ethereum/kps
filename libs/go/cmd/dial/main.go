@@ -21,6 +21,7 @@ func main() {
 	transport := flag.String("transport", "quic", "transport: quic | webrtc")
 	message := flag.String("message", "hello-kps", "message to echo")
 	timeout := flag.Duration("timeout", 15*time.Second, "dial+echo timeout")
+	closeCode := flag.Uint("closecode", 0, "if >0, close the connection with this error code (CloseWithError)")
 	flag.Parse()
 
 	if *addr == "" {
@@ -47,7 +48,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "dial: %v\n", err)
 		os.Exit(1)
 	}
-	defer conn.Close()
+	if *closeCode > 0 {
+		defer conn.CloseWithError(kps.ErrorCode(*closeCode))
+	} else {
+		defer conn.Close()
+	}
 
 	s, err := conn.OpenStream(ctx)
 	if err != nil {

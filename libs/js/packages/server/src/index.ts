@@ -13,5 +13,5 @@ export type { Identity } from './identity.js'
 // Re-export the transport-neutral contract callers program against.
 export type {
   Connection as ConnectionContract, Stream as StreamContract,
-  Datagrams, ConnCloseInfo, StreamCloseInfo, KpsReason, KpsErrorCode,
+  ConnCloseInfo, StreamCloseInfo, KpsReason, KpsErrorCode,
 } from '@kpstreams/core'

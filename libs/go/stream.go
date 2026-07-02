@@ -51,10 +51,13 @@ type webrtcStream struct {
 
 	openCh   chan struct{}
 	openOnce sync.Once
+
+	closedCh  chan struct{}
+	closeOnce sync.Once
 }
 
 func newStream(dc *webrtc.DataChannel) *webrtcStream {
-	s := &webrtcStream{dc: dc, openCh: make(chan struct{})}
+	s := &webrtcStream{dc: dc, openCh: make(chan struct{}), closedCh: make(chan struct{})}
 	s.rcond = sync.NewCond(&s.mu)
 	s.wcond = sync.NewCond(&s.mu)
 
@@ -79,6 +82,7 @@ func newStream(dc *webrtc.DataChannel) *webrtcStream {
 		s.rcond.Broadcast()
 		s.wcond.Broadcast()
 		s.mu.Unlock()
+		s.closeOnce.Do(func() { close(s.closedCh) })
 	})
 	return s
 }
@@ -257,5 +261,25 @@ func (s *webrtcStream) ResetWrite(code ErrorCode) error {
 func (s *webrtcStream) Close() error {
 	_ = s.CloseWrite()
 	_ = s.CancelRead(CodeClosed)
+	s.closeOnce.Do(func() { close(s.closedCh) })
 	return s.dc.Close()
+}
+
+// CloseWithError tears down both halves conveying a code: the peer observes a
+// stream error (RESET) rather than EOF, and is told to stop sending.
+func (s *webrtcStream) CloseWithError(code ErrorCode) error {
+	_ = s.ResetWrite(code)
+	_ = s.CancelRead(code)
+	s.closeOnce.Do(func() { close(s.closedCh) })
+	return s.dc.Close()
+}
+
+func (s *webrtcStream) Closed() <-chan struct{} { return s.closedCh }
+
+// Err reports the stream's close reason (best-effort): a peer RESET surfaces as
+// a *StreamError; a clean close or local teardown is nil.
+func (s *webrtcStream) Err() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.readErr
 }

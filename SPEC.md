@@ -197,7 +197,15 @@ message boundaries.** It models the useful subset of QUIC bidirectional streams.
 - **resetWrite / ResetWrite(reason)** — abort the local write half. The peer
   observes a *stream error* (not EOF). Previously buffered bytes MAY or MAY NOT
   be delivered.
-- **close** — shorthand for tearing down the whole stream (both halves).
+- **close** — shorthand for tearing down the whole stream (both halves) cleanly.
+- **closeWithError / CloseWithError(reason)** — tear down both halves conveying an
+  error code: the peer observes a *stream error* (`RESET`) rather than EOF, and is
+  told to stop sending. The coded counterpart of `close`; the code travels on the
+  wire on both transports (§6.2 `RESET`/`STOP_SENDING`, QUIC `RESET_STREAM`/
+  `STOP_SENDING`).
+- **closed / Closed + Err** — observe termination: a completion signal plus the
+  close reason (nil/none for a clean close, else the error code). Best-effort —
+  a reason is only available where the transport carries one.
 
 There is deliberately **no `closeRead`** as the primary receive-side operation;
 receive-side termination is cancellation, expressed by `cancelRead`.
@@ -288,12 +296,14 @@ a sent datagram may never arrive. Inbound datagrams arrive unsolicited, so they
 are delivered through a bounded buffer (drop-oldest when full), not a single
 racing receive.
 
-API shape (illustrative):
+API shape — flat `send`/`receive` methods on the connection, mirrored across
+languages (`receive` is pull-based: one datagram per call, from the bounded
+buffer):
 
 ```ts
 // rejects with { code: 'too-large', maxDatagramPayloadSize } if over the limit
-await conn.datagrams.send(bytes)
-conn.datagrams.incoming                // ReadableStream<Uint8Array> (bounded)
+await conn.sendDatagram(bytes)
+const p = await conn.receiveDatagram()  // next inbound datagram (bounded, drop-oldest)
 ```
 ```go
 err := conn.SendDatagram(p)            // *DatagramTooLargeError{MaxDatagramPayloadSize} if over the limit
@@ -315,8 +325,15 @@ These are implementation details, not part of the public API, and MUST NOT
 surface as application streams or be relied upon by applications:
 
 - WebRTC bootstrap data channel — negotiated, fixed ID `0`, used only to force
-  the SCTP association up. Never delivered as a stream.
+  the SCTP association (and its m-line) up. It never opens as a usable data
+  channel and is never delivered as a stream.
 - WebRTC datagram channel (§7) — negotiated, fixed ID `1`, always present.
+- WebRTC control channel — negotiated, reliable, ordered, fixed ID `2`. Both
+  peers create it. It carries a single message type, **CONNECTION_CLOSE**: a bare
+  big-endian `uint32` application error code (a message shorter than 4 bytes
+  means code `0`), sent best-effort before teardown — the WebRTC analogue of
+  QUIC `CONNECTION_CLOSE`. On receipt, the peer records the code as the
+  connection's close reason and tears down. Never delivered as a stream.
 - Any data-channel label.
 
 ---
@@ -328,16 +345,24 @@ surface as application streams or be relied upon by applications:
 | local `closeWrite`            | EOF after buffered bytes | unaffected                    |
 | local `resetWrite(code)`      | stream error (with code) | unaffected                    |
 | local `cancelRead(code)`      | unaffected               | writes fail; should reset     |
-| connection close              | all streams error/EOF    | all streams error             |
+| local `closeWithError(code)`  | stream error (with code) | writes fail; should reset     |
+| connection close / `closeWithError(code)` | all streams error/EOF | all streams error        |
 | certhash mismatch (dial time) | dial fails; no connection| —                             |
+
+A connection close MAY carry an application error code, observable at the peer as
+the connection's close reason: QUIC `CONNECTION_CLOSE` and the WebRTC control
+channel's `CONNECTION_CLOSE` (§8) both convey it (best-effort — teardown may race
+delivery, as with QUIC's single-packet close). A code of `0`/none is a clean
+close.
 
 ### 9.1 Error-code registry
 
 The reset/cancel/close `reason.code` is one of the following canonical names.
-Each maps to a wire `uint32` carried in the §6.2 `RESET`/`STOP_SENDING` frames
-(WebRTC) and in QUIC `RESET_STREAM` / `STOP_SENDING` / `CONNECTION_CLOSE`
-application error codes (QUIC). Implementations MUST use these values so JS and
-Go agree; an unknown received code maps to `internal-error`.
+Each maps to a wire `uint32` carried, on WebRTC, in the §6.2 `RESET`/
+`STOP_SENDING` frames and the control channel's `CONNECTION_CLOSE` (§8); and, on
+QUIC, in `RESET_STREAM` / `STOP_SENDING` / `CONNECTION_CLOSE` application error
+codes. Implementations MUST use these values so JS and Go agree; an unknown
+received code maps to `internal-error`.
 
 | code (string)       | wire `uint32` | meaning                                              |
 |---------------------|---------------|------------------------------------------------------|
