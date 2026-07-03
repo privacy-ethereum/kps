@@ -2,15 +2,20 @@
   "name": "@kpstreams/core",
   "version": "0.1.0",
   "description": "Transport-neutral core for KPS: addresses, certhash, error model, and the Connection/Stream contract (plus the WebRTC wire protocol under ./webrtc). Zero runtime deps.",
+  "keywords": ["kps", "certhash", "key-pinning", "secure-transport", "webrtc", "quic", "p2p", "no-ca"],
   "type": "module",
   "license": "MIT",
   "author": "Andrew Morris",
+  "repository": { "type": "git", "url": "git+https://github.com/privacy-ethereum/kps.git", "directory": "libs/js/packages/core" },
+  "homepage": "https://github.com/privacy-ethereum/kps/tree/main/libs/js/packages/core#readme",
+  "bugs": "https://github.com/privacy-ethereum/kps/issues",
   "sideEffects": false,
+  "publishConfig": { "access": "public" },
   "exports": {
     ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
     "./webrtc": { "types": "./dist/webrtc.d.ts", "default": "./dist/webrtc.js" }
   },
   "files": ["dist", "src"],
-  "scripts": { "build": "tsc" },
+  "scripts": { "build": "tsc", "prepack": "tsc" },
   "devDependencies": { "typescript": "^5.6.0" }
 }
