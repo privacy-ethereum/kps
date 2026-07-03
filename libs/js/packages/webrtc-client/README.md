@@ -47,7 +47,9 @@ const stream = await openStream('203.0.113.5:41108:uEiD...')
 
 ## API
 
-- `dial(addr, opts?): Promise<Connection>` — `opts: { signal?, timeoutMs? }` (default 15 s).
+- `dial(addr, opts?): Promise<Connection>` — `opts: { signal? }`. Timeout is via the
+  signal: pass `AbortSignal.timeout(ms)` (or `AbortSignal.any([sig, AbortSignal.timeout(ms)])`);
+  with no signal a ~15 s default timeout applies.
 - `openStream(addr, opts?): Promise<Stream>` — one-shot; closing the stream closes the connection.
 - `parseAddress` / `formatAddress` re-exported from core for convenience, plus the
   `Connection` / `Stream` / `DialOptions` types. (Identical surface to

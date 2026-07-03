@@ -19,7 +19,7 @@ npm install @kpstreams/quic-client
 ```ts
 import { dial } from '@kpstreams/quic-client'
 
-const conn = await dial('203.0.113.5:41108:uEiD...')   // opts: { signal?, timeoutMs? }
+const conn = await dial('203.0.113.5:41108:uEiD...')   // opts: { signal? } — e.g. AbortSignal.timeout(ms)
 
 const stream = await conn.openStream()
 const writer = stream.writable.getWriter()

@@ -17,6 +17,17 @@ import { QuicConnection } from './quic-connection.js'
 const Logger = (loggerPkg as { default: new (name: string, level: number) => unknown }).default
 const LogLevel = (loggerPkg as unknown as { LogLevel: { WARN: number } }).LogLevel
 
+// Default dial timeout, applied via the signal when the caller supplies none
+// (see DialOptions — timeout is expressed through the signal, like Go's ctx).
+const DEFAULT_TIMEOUT_MS = 15_000
+
+// An aborted dial signal — distinguish a timeout (AbortSignal.timeout →
+// DOMException "TimeoutError") from an explicit cancel for a clearer message.
+function dialAbortError(signal: AbortSignal): Error {
+  const reason = signal.reason as { name?: string } | undefined
+  return new Error(reason?.name === 'TimeoutError' ? 'kps: dial timed out' : 'kps: dial aborted')
+}
+
 // Convenience re-exports so callers don't also need to import @kpstreams/core.
 // (Kept identical to @kpstreams/webrtc-client — same job, same surface.)
 export { parseAddress, formatAddress } from '@kpstreams/core'
@@ -49,31 +60,42 @@ const clientCrypto = {
 }
 
 export async function dial(addr: string, opts: DialOptions = {}): Promise<Connection> {
-  if (opts.signal?.aborted) throw new Error('kps: dial aborted')
+  // Timeout is expressed via the signal (see DialOptions): a caller-supplied
+  // signal owns the deadline; otherwise apply the default so a dial can't hang.
+  const signal = opts.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT_MS)
+  if (signal.aborted) throw dialAbortError(signal)
   const a = parseAddress(addr)
   const digest = Buffer.from(decodeCerthash(a.certhash))
 
-  const client = await QUICClient.createQUICClient(
-    {
-      host: a.ip,
-      port: a.port,
-      crypto: clientCrypto,
-      logger: new Logger('@kpstreams/quic-client', LogLevel.WARN),
-      config: {
-        applicationProtos: ['h3'],
-        verifyPeer: true,
-        // Trust is by certhash, not PKI: accept iff sha256(leaf cert) == digest.
-        verifyCallback: async (certs: Uint8Array[]) => {
-          const leaf = certs?.[0]
-          if (!leaf) return BAD_CERTIFICATE
-          const d = createHash('sha256').update(leaf).digest()
-          return d.length === digest.length && timingSafeEqual(d, digest) ? undefined : BAD_CERTIFICATE
+  let client: Awaited<ReturnType<typeof QUICClient.createQUICClient>>
+  try {
+    client = await QUICClient.createQUICClient(
+      {
+        host: a.ip,
+        port: a.port,
+        crypto: clientCrypto,
+        logger: new Logger('@kpstreams/quic-client', LogLevel.WARN),
+        config: {
+          applicationProtos: ['h3'],
+          verifyPeer: true,
+          // Trust is by certhash, not PKI: accept iff sha256(leaf cert) == digest.
+          verifyCallback: async (certs: Uint8Array[]) => {
+            const leaf = certs?.[0]
+            if (!leaf) return BAD_CERTIFICATE
+            const d = createHash('sha256').update(leaf).digest()
+            return d.length === digest.length && timingSafeEqual(d, digest) ? undefined : BAD_CERTIFICATE
+          },
+          enableDgram: [true, 1000, 1000],
         },
-        enableDgram: [true, 1000, 1000],
       },
-    },
-    { timer: opts.timeoutMs ?? 15_000, signal: opts.signal },
-  )
+      { signal },
+    )
+  } catch (e) {
+    // Normalize a signal-driven failure to the same message as the WebRTC client;
+    // otherwise surface the underlying error (e.g. certhash-pinning rejection).
+    if (signal.aborted) throw dialAbortError(signal)
+    throw e
+  }
 
   const conn = new QuicConnection(client.connection)
   // Tearing down the connection must also close the client's UDP socket.

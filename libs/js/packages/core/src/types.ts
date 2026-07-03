@@ -5,8 +5,12 @@
 import type { KpsReason } from './errors.js'
 
 export interface DialOptions {
+  // Abort the dial — cancellation or timeout, whichever the signal expresses.
+  // With no signal, dial applies a ~15s default timeout so it can't hang. Pass a
+  // signal to own the deadline: `AbortSignal.timeout(ms)` for a custom timeout,
+  // or `AbortSignal.any([mySignal, AbortSignal.timeout(ms)])` to combine cancel +
+  // timeout. (The analogue of Go's ctx; there's no separate timeout option.)
   signal?: AbortSignal
-  timeoutMs?: number
 }
 
 export interface OpenStreamOptions {

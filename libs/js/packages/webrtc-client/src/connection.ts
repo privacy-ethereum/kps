@@ -31,6 +31,13 @@ function bytesToArrayBuffer(u8: Uint8Array): ArrayBuffer {
   return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength) as ArrayBuffer
 }
 
+// An aborted dial signal — distinguish a timeout (AbortSignal.timeout →
+// DOMException "TimeoutError") from an explicit cancel for a clearer message.
+function dialAbortError(signal: AbortSignal): Error {
+  const reason = signal.reason as { name?: string } | undefined
+  return new Error(reason?.name === 'TimeoutError' ? 'kps: dial timed out' : 'kps: dial aborted')
+}
+
 // makeDatagramChannel backs the flat sendDatagram/receiveDatagram API with the
 // reserved unreliable channel. Inbound datagrams use a bounded buffer (drop-
 // oldest when full); delivery is best-effort. `receive` is pull-based (one
@@ -145,7 +152,11 @@ export class Connection implements CoreConnection {
   }
 
   static async dial(addrStr: string, opts: DialOptions = {}): Promise<Connection> {
-    if (opts.signal?.aborted) throw new Error('kps: dial aborted')
+    // Timeout is expressed via the signal (SPEC/DialOptions): a caller-supplied
+    // signal owns the deadline; otherwise apply the default timeout so a dial
+    // can't hang forever.
+    const signal = opts.signal ?? AbortSignal.timeout(DEFAULT_TIMEOUT)
+    if (signal.aborted) throw dialAbortError(signal)
     const addr = parseAddress(addrStr)
     const digest = decodeCerthash(addr.certhash)
     const pc = new RTCPeerConnection({})
@@ -162,7 +173,7 @@ export class Connection implements CoreConnection {
     await pc.setRemoteDescription({ type: 'answer', sdp: synthesizeAnswer(addr, ufrag, pwd) })
 
     const conn = new Connection(pc, control)
-    await conn.#waitForOpen(opts.timeoutMs ?? DEFAULT_TIMEOUT, opts.signal)
+    await conn.#waitForOpen(signal)
     return conn
   }
 
@@ -251,25 +262,22 @@ export class Connection implements CoreConnection {
     else this.#incoming.push(stream)
   }
 
-  #waitForOpen(timeoutMs: number, signal?: AbortSignal): Promise<void> {
+  // Resolve when the peer connection opens; reject when the signal fires
+  // (caller cancel or the default/at-caller timeout) or the connection closes.
+  #waitForOpen(signal: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
       if (this.#state === 'open') return resolve()
-      const timer = setTimeout(() => {
-        cleanup(); try { this.#pc.close() } catch {}
-        reject(new Error(`kps: dial timed out after ${timeoutMs}ms`))
-      }, timeoutMs)
       const onState = () => {
         if (this.#pc.connectionState === 'connected') { cleanup(); resolve() }
       }
-      const onAbort = () => { cleanup(); try { this.#pc.close() } catch {} ; reject(new Error('kps: dial aborted')) }
+      const onAbort = () => { cleanup(); try { this.#pc.close() } catch {} ; reject(dialAbortError(signal)) }
       const cleanup = () => {
-        clearTimeout(timer)
         this.#pc.removeEventListener('connectionstatechange', onState)
-        signal?.removeEventListener('abort', onAbort)
+        signal.removeEventListener('abort', onAbort)
       }
       this.#pc.addEventListener('connectionstatechange', onState)
       this.closed.then(() => { cleanup(); reject(new Error('kps: connection closed during dial')) }).catch(() => {})
-      signal?.addEventListener('abort', onAbort, { once: true })
+      signal.addEventListener('abort', onAbort, { once: true })
     })
   }
 

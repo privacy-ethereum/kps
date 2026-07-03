@@ -80,7 +80,7 @@ test('rejects a corrupted certhash (pinning)', async () => {
   const digest = Uint8Array.from(decodeCerthash(a.certhash))
   digest[0] ^= 0xff // valid encoding, wrong pin
   const badAddr = formatAddress({ ...a, certhash: encodeCerthash(digest) })
-  await assert.rejects(() => dial(badAddr, { timeoutMs: 5_000 }))
+  await assert.rejects(() => dial(badAddr, { signal: AbortSignal.timeout(5_000) }))
 })
 
 test('rejects a pre-aborted dial signal', async () => {
