@@ -21,9 +21,28 @@ export function decodeCerthash(s: string): Uint8Array {
   return bytes.slice(2)
 }
 
+// Encode a raw 32-byte SHA-256 digest back into the `uEi...` certhash form
+// (inverse of decodeCerthash). The server uses this to advertise its address.
+export function encodeCerthash(digest: Uint8Array): string {
+  if (digest.length !== MULTIHASH_SHA256_LEN) {
+    throw new Error(`certhash: expected ${MULTIHASH_SHA256_LEN}-byte digest, got ${digest.length}`)
+  }
+  const mh = new Uint8Array(2 + MULTIHASH_SHA256_LEN)
+  mh[0] = MULTIHASH_SHA256_CODE
+  mh[1] = MULTIHASH_SHA256_LEN
+  mh.set(digest, 2)
+  return MULTIBASE_BASE64URL_NOPAD + base64urlEncode(mh)
+}
+
 // Format raw 32 bytes as `AA:BB:...` for SDP a=fingerprint lines.
 export function digestToSdpFingerprint(digest: Uint8Array): string {
   return Array.from(digest, b => b.toString(16).padStart(2, '0').toUpperCase()).join(':')
+}
+
+function base64urlEncode(bytes: Uint8Array): string {
+  let bin = ''
+  for (const b of bytes) bin += String.fromCharCode(b)
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
 function base64urlDecode(s: string): Uint8Array {

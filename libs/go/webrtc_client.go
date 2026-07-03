@@ -3,7 +3,7 @@ package kps
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync"
@@ -45,14 +45,15 @@ func DialWebRTC(ctx context.Context, addr string) (Conn, error) {
 		return nil, err
 	}
 
-	// Pre-allocate the negotiated bootstrap channel so the offer carries the
-	// application m-line; it is not announced via DCEP and never surfaces as a
-	// stream.
+	// Pre-allocate the negotiated control channel (ID 0) before the offer so the
+	// offer carries the application m-line; it also carries CONNECTION_CLOSE
+	// (SPEC §8). Not announced via DCEP; never surfaces as a stream.
 	negotiated := true
-	var bootstrapID uint16 = 0
-	if _, err := pc.CreateDataChannel("_kps_bootstrap", &webrtc.DataChannelInit{
-		Negotiated: &negotiated, ID: &bootstrapID,
-	}); err != nil {
+	var controlID uint16 = 0
+	control, err := pc.CreateDataChannel("_kps_control", &webrtc.DataChannelInit{
+		Negotiated: &negotiated, ID: &controlID,
+	})
+	if err != nil {
 		_ = pc.Close()
 		return nil, err
 	}
@@ -73,7 +74,7 @@ func DialWebRTC(ctx context.Context, addr string) (Conn, error) {
 		return nil, err
 	}
 
-	conn := newConn(pc)
+	conn := newConn(pc, control)
 	connected := make(chan struct{})
 	var once sync.Once
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
@@ -94,12 +95,16 @@ func DialWebRTC(ctx context.Context, addr string) (Conn, error) {
 	}
 }
 
+// randUfrag returns a random ICE ufrag (64 bits, SPEC §5.2), hex-encoded. Hex
+// keeps it within the RFC 8839 ice-char set (ALPHA / DIGIT); base64url's '-'/'_'
+// are NOT valid ice-chars and are rejected by strict stacks like libdatachannel
+// (pion and browsers are lenient). Matches the JS client's generateUfrag.
 func randUfrag() (string, error) {
-	b := make([]byte, 9)
+	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	return base64.RawURLEncoding.EncodeToString(b), nil
+	return hex.EncodeToString(b), nil
 }
 
 func digestToFingerprint(d []byte) string {

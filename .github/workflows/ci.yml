@@ -29,18 +29,32 @@ jobs:
         run: go build ./...
 
   js:
-    name: JS library build
+    name: JS (build + unit + integration)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # The integration suite (test:integration) drives the QUIC client/server
+      # and shells out to the Go lib (server + cmd/dial) for cross-impl coverage,
+      # so both toolchains are needed here.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Build key-pinned-streams (JS library)
+      - name: Build @kpstreams packages
         working-directory: libs/js
         run: |
           npm install
           npm run build
+      - name: Unit tests (core)
+        working-directory: libs/js
+        run: npm test
+      - name: Integration tests (QUIC + cross-impl matrix)
+        working-directory: libs/js
+        # Dials real QUIC/WebRTC clients: needs real UDP socket access (DF-bit /
+        # GSO / ECN); do not run under a restrictive seccomp sandbox.
+        run: npm run test:integration
 
   interop:
     name: Interop (browser WebRTC ↔ Go)

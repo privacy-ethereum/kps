@@ -10,7 +10,7 @@
 KPS = **Key Pinned Streams**. A KPS endpoint is identified by a pinned
 self-signed certificate, not by a CA-signed domain name. KPS provides an
 authenticated, encrypted, multiplexed connection carrying unnamed reliable
-bidirectional byte streams, plus optional connection-level datagrams.
+bidirectional byte streams, plus connection-level datagrams.
 
 ---
 
@@ -27,8 +27,8 @@ bidirectional byte streams, plus optional connection-level datagrams.
 - **Stream** — an unnamed bidirectional reliable ordered byte stream inside a
   connection (§6). No message boundaries, no names, no transport IDs in the
   public API.
-- **Datagram** — an optional, unreliable, unordered, size-limited,
-  connection-level message (§7).
+- **Datagram** — an unreliable, unordered, size-limited, connection-level
+  message (§7). Always available in v0 (both transports provide them).
 - **Transport** — the concrete wire protocol carrying a connection. v0 defines
   two: **WebRTC** (browser-compatible) and **QUIC** (native). The public API
   hides which transport a connection uses.
@@ -94,7 +94,8 @@ familiarity.
 
 - A connection is an authenticated secure session to one pinned identity.
 - A connection carries any number of concurrent, independent **streams**.
-- A connection MAY carry **datagrams** if both ends support them (§7).
+- A connection also carries **datagrams** (§7); in v0 they are always available
+  (both transports provide them, and a listener controls both ends).
 - Multiple independent connections to the same address from the same device MUST
   be supported and MUST be fully independent (separate streams, separate close
   lifetimes).
@@ -134,7 +135,7 @@ KPS-over-WebRTC descends from libp2p webrtc-direct:
   fingerprint comes from the certhash), and the server learns the connection's
   ICE ufrag from the first inbound STUN binding's `USERNAME`.
 - **ICE credentials (KPS rule, diverges from libp2p webrtc-direct).** The
-  `ice-ufrag` is a random connection-demux key with ~64 bits of entropy (normal
+  `ice-ufrag` is a random connection-demux key with at least 64 bits of entropy (normal
   WebRTC length; it does NOT double as the password). The `ice-pwd` is derived
   from the certhash both sides already share:
 
@@ -180,7 +181,7 @@ KPS-over-WebRTC descends from libp2p webrtc-direct:
 ## 6. Stream semantics
 
 A stream is an **unnamed, bidirectional, reliable, ordered byte stream with no
-message boundaries.** It models the useful subset of QUIC bidirectional streams.
+message boundaries.** It models a subset of QUIC bidirectional streams.
 
 ### 6.1 Operations
 
@@ -192,12 +193,20 @@ message boundaries.** It models the useful subset of QUIC bidirectional streams.
   observes EOF on its read half *after* all previously written bytes are
   delivered.
 - **cancelRead / CancelRead(reason)** — the local application no longer wants
-  inbound bytes. Where the transport supports it, signal the peer to stop
-  sending. This is *cancellation*, not graceful EOF.
+  inbound bytes: further inbound bytes are dropped locally and the peer is
+  signalled to stop sending. This is *cancellation*, not graceful EOF.
 - **resetWrite / ResetWrite(reason)** — abort the local write half. The peer
   observes a *stream error* (not EOF). Previously buffered bytes MAY or MAY NOT
   be delivered.
-- **close** — shorthand for tearing down the whole stream (both halves).
+- **close** — tear down the whole stream (both halves). A close MAY carry an
+  error code: with one, the peer observes a *stream error* (`RESET`) rather than
+  EOF and is told to stop sending, and the code travels on the wire on both
+  transports (§6.2 `RESET`/`STOP_SENDING`, QUIC `RESET_STREAM`/`STOP_SENDING`);
+  with no code it is a clean teardown. (An implementation MAY expose the coded
+  form as a separate call.)
+- **closed** — observe termination: a completion signal plus the close reason
+  (none for a clean close, else the error code). Best-effort — the reason may be
+  lost if teardown races its delivery (§9).
 
 There is deliberately **no `closeRead`** as the primary receive-side operation;
 receive-side termination is cancellation, expressed by `cancelRead`.
@@ -288,12 +297,14 @@ a sent datagram may never arrive. Inbound datagrams arrive unsolicited, so they
 are delivered through a bounded buffer (drop-oldest when full), not a single
 racing receive.
 
-API shape (illustrative):
+API shape — flat `send`/`receive` methods on the connection, mirrored across
+languages (`receive` is pull-based: one datagram per call, from the bounded
+buffer):
 
 ```ts
 // rejects with { code: 'too-large', maxDatagramPayloadSize } if over the limit
-await conn.datagrams.send(bytes)
-conn.datagrams.incoming                // ReadableStream<Uint8Array> (bounded)
+await conn.sendDatagram(bytes)
+const p = await conn.receiveDatagram()  // next inbound datagram (bounded, drop-oldest)
 ```
 ```go
 err := conn.SendDatagram(p)            // *DatagramTooLargeError{MaxDatagramPayloadSize} if over the limit
@@ -314,8 +325,14 @@ Transport mappings:
 These are implementation details, not part of the public API, and MUST NOT
 surface as application streams or be relied upon by applications:
 
-- WebRTC bootstrap data channel — negotiated, fixed ID `0`, used only to force
-  the SCTP association up. Never delivered as a stream.
+- WebRTC control channel — negotiated, reliable, ordered, fixed ID `0`. Both
+  peers create it (the client before the offer, which also forces the SCTP
+  association and its m-line up). It carries a single message type,
+  **CONNECTION_CLOSE**: a bare big-endian `uint32` application error code (a
+  message shorter than 4 bytes means code `0`), sent best-effort before teardown
+  — the WebRTC analogue of QUIC `CONNECTION_CLOSE`. On receipt, the peer records
+  the code as the connection's close reason and tears down. Never delivered as a
+  stream.
 - WebRTC datagram channel (§7) — negotiated, fixed ID `1`, always present.
 - Any data-channel label.
 
@@ -328,16 +345,24 @@ surface as application streams or be relied upon by applications:
 | local `closeWrite`            | EOF after buffered bytes | unaffected                    |
 | local `resetWrite(code)`      | stream error (with code) | unaffected                    |
 | local `cancelRead(code)`      | unaffected               | writes fail; should reset     |
-| connection close              | all streams error/EOF    | all streams error             |
+| local `close(code)`           | stream error (with code) | writes fail; should reset     |
+| connection close (with code)  | all streams error/EOF    | all streams error             |
 | certhash mismatch (dial time) | dial fails; no connection| —                             |
+
+A connection close MAY carry an application error code, observable at the peer as
+the connection's close reason: QUIC `CONNECTION_CLOSE` and the WebRTC control
+channel's `CONNECTION_CLOSE` (§8) both convey it (best-effort — teardown may race
+delivery, as with QUIC's single-packet close). A code of `0`/none is a clean
+close.
 
 ### 9.1 Error-code registry
 
 The reset/cancel/close `reason.code` is one of the following canonical names.
-Each maps to a wire `uint32` carried in the §6.2 `RESET`/`STOP_SENDING` frames
-(WebRTC) and in QUIC `RESET_STREAM` / `STOP_SENDING` / `CONNECTION_CLOSE`
-application error codes (QUIC). Implementations MUST use these values so JS and
-Go agree; an unknown received code maps to `internal-error`.
+Each maps to a wire `uint32` carried, on WebRTC, in the §6.2 `RESET`/
+`STOP_SENDING` frames and the control channel's `CONNECTION_CLOSE` (§8); and, on
+QUIC, in `RESET_STREAM` / `STOP_SENDING` / `CONNECTION_CLOSE` application error
+codes. All implementations MUST use these values so they agree on the wire; an
+unknown received code maps to `internal-error`.
 
 | code (string)       | wire `uint32` | meaning                                              |
 |---------------------|---------------|------------------------------------------------------|
@@ -348,7 +373,7 @@ Go agree; an unknown received code maps to `internal-error`.
 | `timeout`           | `4`           | deadline/idle timeout                                |
 | `network-error`     | `5`           | transport/connectivity failure                       |
 | `protocol-error`    | `6`           | malformed or out-of-contract peer behaviour          |
-| `unsupported`       | `7`           | capability not supported (e.g. datagrams)            |
+| `unsupported`       | `7`           | capability not supported                             |
 | `too-large`         | `8`           | payload exceeds a limit (e.g. datagram `maxSize`)    |
 | `queue-full`        | `9`           | bounded inbound queue full; item rejected            |
 | `permission-denied` | `10`          | refused by policy                                    |
@@ -360,8 +385,8 @@ Go agree; an unknown received code maps to `internal-error`.
 
 Conforming implementations MUST interoperate across these scenarios:
 
-1. Browser JS WebRTC client ↔ Go KPS listener.
-2. Go native QUIC client ↔ Go KPS listener.
+1. A WebRTC client ↔ a KPS listener (including a browser-originated WebRTC client).
+2. A QUIC client ↔ a KPS listener.
 3. A WebRTC client and a QUIC client on the **same listener UDP port**.
 4. Multiple concurrent independent connections from one device.
 5. Multiple streams per connection.

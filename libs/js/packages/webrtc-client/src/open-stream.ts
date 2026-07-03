@@ -1,10 +1,5 @@
-export { dial, Connection, type DialOptions, type ConnCloseInfo, type Datagrams } from './connection.js'
-export { Stream, type StreamCloseInfo } from './stream.js'
-export { parseAddress, formatAddress, type Address } from './address.js'
-export type { KpsErrorCode, KpsReason } from './framing.js'
-
-import { dial, type DialOptions } from './connection.js'
-import type { Stream } from './stream.js'
+import { dial } from './connection.js'
+import type { DialOptions, Stream } from '@kpstreams/core'
 
 // One-shot convenience over dial → openStream. The returned stream owns the
 // hidden connection: closing the stream closes the connection (SPEC / API doc).

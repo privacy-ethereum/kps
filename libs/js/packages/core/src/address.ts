@@ -29,9 +29,11 @@ export function parseAddress(s: string): Address {
   // rest is "<port>:<certhash>"; the certhash never contains ':'.
   const j = rest.indexOf(':')
   if (j < 0) throw malformed()
-  const port = Number(rest.slice(0, j))
+  const portStr = rest.slice(0, j)
   const certhash = rest.slice(j + 1)
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('address: port out of range')
+  if (!/^\d+$/.test(portStr)) throw malformed() // reject 0x1bb, 1e3, whitespace, etc.
+  const port = Number(portStr)
+  if (port < 1 || port > 65535) throw new Error('address: port out of range')
   if (!ip || !certhash) throw malformed()
   return { ip, port, certhash }
 }

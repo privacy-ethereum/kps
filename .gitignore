@@ -5,7 +5,12 @@
 
 # go
 libs/go/server
+libs/go/dial
 *.key
+
+# generated self-signed identities (server default paths)
+kps-cert.pem
+kps-key.pem
 
 # playwright
 **/test-results/

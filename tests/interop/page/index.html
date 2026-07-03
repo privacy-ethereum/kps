@@ -1,11 +1,24 @@
 <!doctype html>
 <html>
-<head><meta charset="utf-8"><title>kps echo test</title></head>
+<head>
+  <meta charset="utf-8"><title>kps echo test</title>
+  <!-- Resolve the bare package specifiers to the dist trees the static server
+       exposes (see global-setup.js STATIC_ROUTES). Avoids a bundler. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "@kpstreams/core": "/kps/core/index.js",
+      "@kpstreams/core/webrtc": "/kps/core/webrtc.js",
+      "@kpstreams/webrtc-client": "/kps/webrtc-client/index.js"
+    }
+  }
+  </script>
+</head>
 <body>
   <pre id="status">idle</pre>
   <pre id="result"></pre>
   <script type="module">
-    import { dial } from '/kps-client/index.js'
+    import { dial } from '@kpstreams/webrtc-client'
 
     const statusEl = document.getElementById('status')
     const resultEl = document.getElementById('result')

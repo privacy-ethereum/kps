@@ -84,8 +84,34 @@ func (c *quicConn) AcceptStream(ctx context.Context) (Stream, error) {
 	return &quicStream{qs: qs}, nil
 }
 
-func (c *quicConn) Close() error            { return c.qc.CloseWithError(0, "") }
+func (c *quicConn) Close() error { return c.qc.CloseWithError(0, "") }
+
+func (c *quicConn) CloseWithError(code ErrorCode) error {
+	return c.qc.CloseWithError(quic.ApplicationErrorCode(code), "")
+}
+
 func (c *quicConn) Closed() <-chan struct{} { return c.qc.Context().Done() }
+
+func (c *quicConn) Err() error {
+	select {
+	case <-c.qc.Context().Done():
+		err := context.Cause(c.qc.Context())
+		var appErr *quic.ApplicationError
+		if errors.As(err, &appErr) {
+			if appErr.ErrorCode == 0 {
+				return nil // clean close (application code 0)
+			}
+			// Normalize to *StreamError so Err() is the same type on both transports.
+			return &StreamError{Code: ErrorCode(appErr.ErrorCode), Remote: appErr.Remote}
+		}
+		if errors.Is(err, context.Canceled) {
+			return nil
+		}
+		return err
+	default:
+		return nil // still open
+	}
+}
 
 func (c *quicConn) SendDatagram(p []byte) error {
 	err := c.qc.SendDatagram(p) // QUIC DATAGRAM (RFC 9221)
@@ -133,4 +159,33 @@ func (s *quicStream) CancelRead(code ErrorCode) error {
 func (s *quicStream) Close() error {
 	s.qs.CancelRead(quic.StreamErrorCode(CodeClosed))
 	return s.CloseWrite()
+}
+
+func (s *quicStream) CloseWithError(code ErrorCode) error {
+	s.qs.CancelRead(quic.StreamErrorCode(code))
+	if s.writeClosed.Swap(true) {
+		return nil
+	}
+	s.qs.CancelWrite(quic.StreamErrorCode(code))
+	return nil
+}
+
+func (s *quicStream) Closed() <-chan struct{} { return s.qs.Context().Done() }
+
+func (s *quicStream) Err() error {
+	select {
+	case <-s.qs.Context().Done():
+		err := context.Cause(s.qs.Context())
+		var qse *quic.StreamError
+		if errors.As(err, &qse) {
+			// Normalize to *StreamError (same type as the WebRTC transport).
+			return &StreamError{Code: ErrorCode(qse.ErrorCode), Remote: qse.Remote}
+		}
+		if err == nil || errors.Is(err, context.Canceled) {
+			return nil // clean/local close
+		}
+		return err
+	default:
+		return nil // still open
+	}
 }
