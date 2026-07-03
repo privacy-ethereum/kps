@@ -78,3 +78,13 @@ test('rejects a corrupted certhash (pinning)', async () => {
 test('rejects a pre-aborted dial signal', async () => {
   await assert.rejects(() => dial(server.address, { signal: AbortSignal.abort() }))
 })
+
+test('rejects acceptStream with a pre-aborted signal', async () => {
+  const conn = await dial(server.address)
+  try {
+    await assert.rejects(
+      () => conn.acceptStream({ signal: AbortSignal.abort() }),
+      /acceptStream aborted/,
+    )
+  } finally { await conn.close() }
+})

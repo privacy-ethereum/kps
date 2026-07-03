@@ -145,6 +145,7 @@ export class Connection implements CoreConnection {
   }
 
   static async dial(addrStr: string, opts: DialOptions = {}): Promise<Connection> {
+    if (opts.signal?.aborted) throw new Error('kps: dial aborted')
     const addr = parseAddress(addrStr)
     const digest = decodeCerthash(addr.certhash)
     const pc = new RTCPeerConnection({})

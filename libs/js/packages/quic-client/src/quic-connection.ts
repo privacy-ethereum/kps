@@ -130,6 +130,7 @@ export class QuicConnection implements CoreConnection {
   acceptStream(opts: AcceptStreamOptions = {}): Promise<CoreStream> {
     const ready = this.#incoming.shift()
     if (ready) return Promise.resolve(ready)
+    if (opts.signal?.aborted) return Promise.reject(new Error('kps: acceptStream aborted'))
     if (this.#state === 'closed') return Promise.reject(new Error('kps: connection is closed'))
     const signal = opts.signal
     return new Promise<CoreStream>((resolve, reject) => {
