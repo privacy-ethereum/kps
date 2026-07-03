@@ -17,12 +17,12 @@ export function extractUfragFromLocalOffer(sdp: string): string {
   return m[1]
 }
 
-// A random connection-demux ufrag (~72 bits), hex-encoded. It no longer doubles
-// as the password, so it need not be pwd-length. Hex keeps it within the ICE
-// character set (ALPHA/DIGIT); base64url's '-'/'_' are NOT valid ice-chars and
-// are rejected by strict stacks like libdatachannel (pion is lenient).
+// A random connection-demux ufrag (64 bits, SPEC §5.2), hex-encoded. It no
+// longer doubles as the password, so it need not be pwd-length. Hex keeps it
+// within the ICE character set (ALPHA/DIGIT); base64url's '-'/'_' are NOT valid
+// ice-chars and are rejected by strict stacks like libdatachannel (pion is lenient).
 export function generateUfrag(): string {
-  const bytes = new Uint8Array(9)
+  const bytes = new Uint8Array(8)
   crypto.getRandomValues(bytes)
   return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
 }

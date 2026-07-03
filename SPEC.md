@@ -27,8 +27,8 @@ bidirectional byte streams, plus optional connection-level datagrams.
 - **Stream** — an unnamed bidirectional reliable ordered byte stream inside a
   connection (§6). No message boundaries, no names, no transport IDs in the
   public API.
-- **Datagram** — an optional, unreliable, unordered, size-limited,
-  connection-level message (§7).
+- **Datagram** — an unreliable, unordered, size-limited, connection-level
+  message (§7). Always available in v0 (both transports provide them).
 - **Transport** — the concrete wire protocol carrying a connection. v0 defines
   two: **WebRTC** (browser-compatible) and **QUIC** (native). The public API
   hides which transport a connection uses.
@@ -94,7 +94,8 @@ familiarity.
 
 - A connection is an authenticated secure session to one pinned identity.
 - A connection carries any number of concurrent, independent **streams**.
-- A connection MAY carry **datagrams** if both ends support them (§7).
+- A connection also carries **datagrams** (§7); in v0 they are always available
+  (both transports provide them, and a listener controls both ends).
 - Multiple independent connections to the same address from the same device MUST
   be supported and MUST be fully independent (separate streams, separate close
   lifetimes).
@@ -134,7 +135,7 @@ KPS-over-WebRTC descends from libp2p webrtc-direct:
   fingerprint comes from the certhash), and the server learns the connection's
   ICE ufrag from the first inbound STUN binding's `USERNAME`.
 - **ICE credentials (KPS rule, diverges from libp2p webrtc-direct).** The
-  `ice-ufrag` is a random connection-demux key with ~64 bits of entropy (normal
+  `ice-ufrag` is a random connection-demux key with at least 64 bits of entropy (normal
   WebRTC length; it does NOT double as the password). The `ice-pwd` is derived
   from the certhash both sides already share:
 
@@ -197,15 +198,15 @@ message boundaries.** It models the useful subset of QUIC bidirectional streams.
 - **resetWrite / ResetWrite(reason)** — abort the local write half. The peer
   observes a *stream error* (not EOF). Previously buffered bytes MAY or MAY NOT
   be delivered.
-- **close** — shorthand for tearing down the whole stream (both halves) cleanly.
-- **closeWithError / CloseWithError(reason)** — tear down both halves conveying an
-  error code: the peer observes a *stream error* (`RESET`) rather than EOF, and is
-  told to stop sending. The coded counterpart of `close`; the code travels on the
-  wire on both transports (§6.2 `RESET`/`STOP_SENDING`, QUIC `RESET_STREAM`/
-  `STOP_SENDING`).
-- **closed / Closed + Err** — observe termination: a completion signal plus the
-  close reason (nil/none for a clean close, else the error code). Best-effort —
-  a reason is only available where the transport carries one.
+- **close** — tear down the whole stream (both halves). A close MAY carry an
+  error code: with one, the peer observes a *stream error* (`RESET`) rather than
+  EOF and is told to stop sending, and the code travels on the wire on both
+  transports (§6.2 `RESET`/`STOP_SENDING`, QUIC `RESET_STREAM`/`STOP_SENDING`);
+  with no code it is a clean teardown. (An implementation MAY expose the coded
+  form as a separate call.)
+- **closed** — observe termination: a completion signal plus the close reason
+  (none for a clean close, else the error code). Best-effort — a reason is only
+  available where the transport carries one.
 
 There is deliberately **no `closeRead`** as the primary receive-side operation;
 receive-side termination is cancellation, expressed by `cancelRead`.
@@ -344,8 +345,8 @@ surface as application streams or be relied upon by applications:
 | local `closeWrite`            | EOF after buffered bytes | unaffected                    |
 | local `resetWrite(code)`      | stream error (with code) | unaffected                    |
 | local `cancelRead(code)`      | unaffected               | writes fail; should reset     |
-| local `closeWithError(code)`  | stream error (with code) | writes fail; should reset     |
-| connection close / `closeWithError(code)` | all streams error/EOF | all streams error        |
+| local `close(code)`           | stream error (with code) | writes fail; should reset     |
+| connection close (with code)  | all streams error/EOF    | all streams error             |
 | certhash mismatch (dial time) | dial fails; no connection| —                             |
 
 A connection close MAY carry an application error code, observable at the peer as
@@ -360,8 +361,8 @@ The reset/cancel/close `reason.code` is one of the following canonical names.
 Each maps to a wire `uint32` carried, on WebRTC, in the §6.2 `RESET`/
 `STOP_SENDING` frames and the control channel's `CONNECTION_CLOSE` (§8); and, on
 QUIC, in `RESET_STREAM` / `STOP_SENDING` / `CONNECTION_CLOSE` application error
-codes. Implementations MUST use these values so JS and Go agree; an unknown
-received code maps to `internal-error`.
+codes. All implementations MUST use these values so they agree on the wire; an
+unknown received code maps to `internal-error`.
 
 | code (string)       | wire `uint32` | meaning                                              |
 |---------------------|---------------|------------------------------------------------------|
@@ -384,8 +385,8 @@ received code maps to `internal-error`.
 
 Conforming implementations MUST interoperate across these scenarios:
 
-1. Browser JS WebRTC client ↔ Go KPS listener.
-2. Go native QUIC client ↔ Go KPS listener.
+1. A WebRTC client ↔ a KPS listener (including a browser-originated WebRTC client).
+2. A QUIC client ↔ a KPS listener.
 3. A WebRTC client and a QUIC client on the **same listener UDP port**.
 4. Multiple concurrent independent connections from one device.
 5. Multiple streams per connection.

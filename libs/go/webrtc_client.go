@@ -95,12 +95,12 @@ func DialWebRTC(ctx context.Context, addr string) (Conn, error) {
 	}
 }
 
-// randUfrag returns a random ICE ufrag (~72 bits), hex-encoded. Hex keeps it
-// within the RFC 8839 ice-char set (ALPHA / DIGIT); base64url's '-'/'_' are NOT
-// valid ice-chars and are rejected by strict stacks like libdatachannel (pion
-// and browsers are lenient). Matches the JS client's generateUfrag.
+// randUfrag returns a random ICE ufrag (64 bits, SPEC §5.2), hex-encoded. Hex
+// keeps it within the RFC 8839 ice-char set (ALPHA / DIGIT); base64url's '-'/'_'
+// are NOT valid ice-chars and are rejected by strict stacks like libdatachannel
+// (pion and browsers are lenient). Matches the JS client's generateUfrag.
 func randUfrag() (string, error) {
-	b := make([]byte, 9)
+	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
