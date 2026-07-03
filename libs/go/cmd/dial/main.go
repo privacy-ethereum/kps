@@ -22,6 +22,7 @@ func main() {
 	message := flag.String("message", "hello-kps", "message to echo")
 	timeout := flag.Duration("timeout", 15*time.Second, "dial+echo timeout")
 	closeCode := flag.Uint("closecode", 0, "if >0, close the connection with this error code (CloseWithError)")
+	datagram := flag.Bool("datagram", false, "echo via a datagram round-trip instead of a stream")
 	flag.Parse()
 
 	if *addr == "" {
@@ -52,6 +53,34 @@ func main() {
 		defer conn.CloseWithError(kps.ErrorCode(*closeCode))
 	} else {
 		defer conn.Close()
+	}
+
+	// Datagram mode: send + read the echo back. Datagrams are unreliable, so
+	// retry the send until the echo arrives or the deadline passes.
+	if *datagram {
+		msg := []byte(*message)
+		deadline := time.Now().Add(*timeout)
+		for time.Now().Before(deadline) {
+			// The datagram channel opens shortly after connect; a send may fail
+			// with "not open" until then. Treat send errors as transient.
+			if err := conn.SendDatagram(msg); err != nil {
+				time.Sleep(50 * time.Millisecond)
+				continue
+			}
+			rctx, rcancel := context.WithTimeout(ctx, 300*time.Millisecond)
+			got, rerr := conn.ReceiveDatagram(rctx)
+			rcancel()
+			if rerr == nil {
+				fmt.Print(string(got))
+				if string(got) != *message {
+					fmt.Fprintf(os.Stderr, "\ndatagram echo mismatch: sent %q got %q\n", *message, string(got))
+					os.Exit(1)
+				}
+				return
+			}
+		}
+		fmt.Fprintln(os.Stderr, "datagram: no echo within timeout")
+		os.Exit(1)
 	}
 
 	s, err := conn.OpenStream(ctx)

@@ -191,13 +191,13 @@ export async function spawnGoServer() {
   }
 }
 
-function spawnGoClientOnce({ addr, transport, message, timeoutMs }) {
+function spawnGoClientOnce({ addr, transport, message, timeoutMs, datagram }) {
   const bin = buildOnce('dial', './cmd/dial')
+  const args = ['-addr', addr, '-transport', transport, '-message', message,
+    '-timeout', `${Math.ceil(timeoutMs / 1000)}s`]
+  if (datagram) args.push('-datagram')
   return new Promise((resolve) => {
-    const child = spawn(bin, [
-      '-addr', addr, '-transport', transport, '-message', message,
-      '-timeout', `${Math.ceil(timeoutMs / 1000)}s`,
-    ], { cwd: libsGo, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(bin, args, { cwd: libsGo, stdio: ['ignore', 'pipe', 'pipe'] })
     let out = '', err = ''
     child.stdout.on('data', (d) => { out += d })
     child.stderr.on('data', (d) => { err += d })
@@ -213,10 +213,10 @@ function spawnGoClientOnce({ addr, transport, message, timeoutMs }) {
 // establishment is best-effort and can occasionally miss its window under CI
 // load; a retry re-dials cleanly. An *echo mismatch* is NOT retried — that would
 // be a real correctness bug — so retries stop as soon as the client reports one.
-export async function spawnGoClient({ addr, transport = 'quic', message = 'hello-kps', timeoutMs = 15_000, attempts = 3 }) {
+export async function spawnGoClient({ addr, transport = 'quic', message = 'hello-kps', timeoutMs = 15_000, attempts = 3, datagram = false }) {
   let last
   for (let i = 0; i < attempts; i++) {
-    last = await spawnGoClientOnce({ addr, transport, message, timeoutMs })
+    last = await spawnGoClientOnce({ addr, transport, message, timeoutMs, datagram })
     if (last.code === 0 || /echo mismatch/.test(last.err)) return last
   }
   return last

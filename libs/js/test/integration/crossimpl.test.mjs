@@ -55,4 +55,14 @@ describe('Go client → JS server', { skip: skipNoGo }, () => {
     assert.equal(code, 0, `go dial failed: ${err}`)
     assert.equal(out, 'go-webrtc-to-js')
   })
+
+  // WebRTC datagram symmetry: the QUIC datagram round-trip is covered in
+  // quic.test.mjs; the WebRTC path can't run headless JS↔JS (juice loopback), so
+  // exercise it cross-impl with the Go webrtc client against the JS server's
+  // datagram echo.
+  test('WebRTC datagram round-trip', async () => {
+    const { code, out, err } = await spawnGoClient({ addr: server.address, transport: 'webrtc', message: 'go-webrtc-dgram', datagram: true })
+    assert.equal(code, 0, `go datagram dial failed: ${err}`)
+    assert.equal(out, 'go-webrtc-dgram')
+  })
 })

@@ -67,6 +67,14 @@ test('datagram round-trip', async () => {
   } finally { await conn.close() }
 })
 
+test('pending receiveDatagram rejects when the connection closes', async () => {
+  const conn = await dial(server.address)
+  const pending = conn.receiveDatagram() // nothing will ever arrive
+  const assertion = assert.rejects(pending) // attach handler before closing
+  await conn.close()
+  await assertion
+})
+
 test('rejects a corrupted certhash (pinning)', async () => {
   const a = parseAddress(server.address)
   const digest = Uint8Array.from(decodeCerthash(a.certhash))
