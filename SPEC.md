@@ -181,7 +181,7 @@ KPS-over-WebRTC descends from libp2p webrtc-direct:
 ## 6. Stream semantics
 
 A stream is an **unnamed, bidirectional, reliable, ordered byte stream with no
-message boundaries.** It models the useful subset of QUIC bidirectional streams.
+message boundaries.** It models a subset of QUIC bidirectional streams.
 
 ### 6.1 Operations
 
