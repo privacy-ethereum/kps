@@ -193,8 +193,8 @@ message boundaries.** It models a subset of QUIC bidirectional streams.
   observes EOF on its read half *after* all previously written bytes are
   delivered.
 - **cancelRead / CancelRead(reason)** — the local application no longer wants
-  inbound bytes. Where the transport supports it, signal the peer to stop
-  sending. This is *cancellation*, not graceful EOF.
+  inbound bytes: further inbound bytes are dropped locally and the peer is
+  signalled to stop sending. This is *cancellation*, not graceful EOF.
 - **resetWrite / ResetWrite(reason)** — abort the local write half. The peer
   observes a *stream error* (not EOF). Previously buffered bytes MAY or MAY NOT
   be delivered.
@@ -205,8 +205,8 @@ message boundaries.** It models a subset of QUIC bidirectional streams.
   with no code it is a clean teardown. (An implementation MAY expose the coded
   form as a separate call.)
 - **closed** — observe termination: a completion signal plus the close reason
-  (none for a clean close, else the error code). Best-effort — a reason is only
-  available where the transport carries one.
+  (none for a clean close, else the error code). Best-effort — the reason may be
+  lost if teardown races its delivery (§9).
 
 There is deliberately **no `closeRead`** as the primary receive-side operation;
 receive-side termination is cancellation, expressed by `cancelRead`.
