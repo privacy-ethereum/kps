@@ -373,7 +373,7 @@ unknown received code maps to `internal-error`.
 | `timeout`           | `4`           | deadline/idle timeout                                |
 | `network-error`     | `5`           | transport/connectivity failure                       |
 | `protocol-error`    | `6`           | malformed or out-of-contract peer behaviour          |
-| `unsupported`       | `7`           | capability not supported (e.g. datagrams)            |
+| `unsupported`       | `7`           | capability not supported                             |
 | `too-large`         | `8`           | payload exceeds a limit (e.g. datagram `maxSize`)    |
 | `queue-full`        | `9`           | bounded inbound queue full; item rejected            |
 | `permission-denied` | `10`          | refused by policy                                    |
