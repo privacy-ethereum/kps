@@ -51,9 +51,10 @@ What's intentionally **not** here:
 
 ## What works
 
-Browser ↔ Go and native Go ↔ Go, end-to-end encrypted. Both transports —
-**WebRTC** (browser) and **QUIC** (native) — share one UDP port and one address,
-with the API hiding which is in use.
+Browser, native-Go, and Node clients interoperate with a Go **or** Node
+(`@kpstreams/server`) listener, end-to-end encrypted. Both transports —
+**WebRTC** (browser) and **QUIC** (native / Node) — share one UDP port and one
+address, with the API hiding which is in use.
 
 - **Unnamed, multiplexed byte streams** — reliable, ordered, no message
   boundaries; QUIC-like lifecycle (`closeWrite` → EOF, `cancelRead`, `resetWrite`).
@@ -64,18 +65,21 @@ with the API hiding which is in use.
   certhash (no recomputable fingerprint), the QUIC ALPN is non-identifying, and
   the certificate carries no KPS-identifying metadata (see `SECURITY.md`).
 
-An interop test matrix exercises all of this: Go tests cover QUIC and a Go
-WebRTC client (multi-conn, multi-stream, the stream lifecycle, datagrams, and
-both transports on one port simultaneously), and a Playwright-driven Chromium
-covers the real browser ↔ Go path. CI runs the lot.
+An interop test matrix exercises all of this: Go tests cover the Go library
+(multi-conn, multi-stream, the stream lifecycle, datagrams, connection-close
+codes, and both transports on one port simultaneously); a Node `node:test` suite
+drives `@kpstreams/quic-client` and `@kpstreams/server` end-to-end and
+cross-implementation against the Go server (streams, datagrams, backpressure,
+certhash-pinning rejection, abort); and a Playwright-driven Chromium covers the
+real browser ↔ Go **and** browser ↔ JS-server paths. CI runs the lot.
 
 ## Layout
 
 ```
-libs/js/        TypeScript browser/client library — Connection, Stream, address helpers
-libs/go/        Go library + cmd/server demo CLI — import "github.com/privacy-ethereum/kps/libs/go"
+libs/js/        TypeScript npm packages (@kpstreams/*): core, webrtc-client, quic-client, server
+libs/go/        Go library + cmd/server & cmd/dial CLIs — import "github.com/privacy-ethereum/kps/libs/go"
 demos/chat/     Chat + eth-rpc demo (server-go + web) consuming the libraries
-tests/interop/  Playwright interop test — browser dials the Go server
+tests/interop/  Playwright interop test — a browser dials the Go and JS servers
 ```
 
 ## Quick taste
@@ -112,7 +116,7 @@ io.Copy(os.Stdout, s) // "hello"
 Browser (WebRTC):
 
 ```js
-import { dial } from 'key-pinned-streams'
+import { dial } from '@kpstreams/webrtc-client'
 
 const conn = await dial('192.168.x.y:4242:uEi...')
 const stream = await conn.openStream()
