@@ -7,15 +7,19 @@
 // @kpstreams/server (copied for now; a shared package could dedupe them).
 
 import quicPkg from '@infisical/quic'
-import loggerPkg from '@matrixai/logger'
+import { createRequire } from 'node:module'
 import { randomFillSync, createHash, timingSafeEqual } from 'node:crypto'
 import { parseAddress, decodeCerthash, type Connection, type Stream, type DialOptions } from '@kpstreams/core'
 import { QuicConnection } from './quic-connection.js'
 
 // @matrixai/quic logs at INFO by default (straight to the app's console); run it
-// at WARN so dialing doesn't spam the host process.
-const Logger = (loggerPkg as { default: new (name: string, level: number) => unknown }).default
-const LogLevel = (loggerPkg as unknown as { LogLevel: { WARN: number } }).LogLevel
+// at WARN so dialing doesn't spam the host process. @matrixai/logger is CJS; its
+// ESM default-import shape varies across runtimes (Node/Bun/Deno), so load it via
+// createRequire for deterministic CJS semantics.
+const loggerPkg = createRequire(import.meta.url)('@matrixai/logger') as {
+  default: new (name: string, level: number) => unknown
+  LogLevel: { WARN: number }
+}
 
 // Default dial timeout, applied via the signal when the caller supplies none
 // (see DialOptions — timeout is expressed through the signal, like Go's ctx).
@@ -74,7 +78,7 @@ export async function dial(addr: string, opts: DialOptions = {}): Promise<Connec
         host: a.ip,
         port: a.port,
         crypto: clientCrypto,
-        logger: new Logger('@kpstreams/quic-client', LogLevel.WARN),
+        logger: new loggerPkg.default('@kpstreams/quic-client', loggerPkg.LogLevel.WARN),
         config: {
           applicationProtos: ['h3'],
           verifyPeer: true,

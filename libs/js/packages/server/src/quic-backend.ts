@@ -6,7 +6,7 @@
 // @infisical/quic is CommonJS with non-statically-analyzable exports, so ESM
 // named imports fail at runtime — default-import the module and destructure.
 import quicPkg from '@infisical/quic'
-import loggerPkg from '@matrixai/logger'
+import { createRequire } from 'node:module'
 import { randomBytes, createHmac, timingSafeEqual } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import type { Connection as CoreConnection } from '@kpstreams/core'
@@ -15,9 +15,13 @@ import type { Identity } from './identity.js'
 
 // @matrixai/quic logs at INFO by default (straight to the app's console). A
 // networking library shouldn't spam the host process, so run it at WARN.
-const Logger = (loggerPkg as { default: new (name: string, level: number) => unknown }).default
-const LogLevel = (loggerPkg as unknown as { LogLevel: { WARN: number } }).LogLevel
-function quietLogger(name: string): unknown { return new Logger(name, LogLevel.WARN) }
+// @matrixai/logger is CJS; its ESM default-import shape varies across runtimes
+// (Node/Bun/Deno), so load it via createRequire for deterministic CJS semantics.
+const loggerPkg = createRequire(import.meta.url)('@matrixai/logger') as {
+  default: new (name: string, level: number) => unknown
+  LogLevel: { WARN: number }
+}
+function quietLogger(name: string): unknown { return new loggerPkg.default(name, loggerPkg.LogLevel.WARN) }
 
 const { QUICServer, events: quicEvents } = quicPkg as unknown as {
   QUICServer: new (opts: unknown) => {
