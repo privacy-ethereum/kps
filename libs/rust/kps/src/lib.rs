@@ -10,11 +10,14 @@
 mod address;
 mod api;
 mod cert;
+mod conn;
 mod error;
 mod framing;
 mod ice;
 mod listener;
 mod quic;
+mod stream;
+mod webrtc_client;
 
 pub use address::{decode_certhash, encode_certhash, format_address, parse_address, Address};
 pub use api::{Conn, Stream};
@@ -22,3 +25,4 @@ pub use cert::Identity;
 pub use error::{DatagramTooLargeError, Error, ErrorCode, Result, StreamError};
 pub use listener::{listen, ListenOptions, Listener};
 pub use quic::dial;
+pub use webrtc_client::dial_webrtc;

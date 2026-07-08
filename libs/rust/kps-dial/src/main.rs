@@ -87,7 +87,7 @@ async fn main() {
 
     let dial_result = match flags.transport.as_str() {
         "quic" => timeout(flags.timeout, kps::dial(&flags.addr)).await,
-        // TODO(phase 4): kps::dial_webrtc
+        "webrtc" => timeout(flags.timeout, kps::dial_webrtc(&flags.addr)).await,
         other => {
             eprintln!("dial: unknown transport {other:?}");
             std::process::exit(2);
