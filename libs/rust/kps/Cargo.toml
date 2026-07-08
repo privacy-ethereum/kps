@@ -1,0 +1,37 @@
+[package]
+name = "kps"
+description = "Key Pinned Streams: transport-neutral, certhash-pinned secure multiplexed connections (WebRTC + QUIC on one UDP port)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+async-trait = "0.1"
+thiserror = "2"
+bytes = "1"
+
+# certhash / ICE pwd / framing
+sha2 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
+hex = "0.4"
+
+# identity certificate
+rcgen = "0.13"
+rand = "0.8"
+pem = "3"
+time = "0.3"
+
+# QUIC transport
+quinn = "0.11"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pki-types = "1"
+
+# WebRTC transport
+webrtc = { version = "0.14", features = ["pem"] }
+stun = "0.9"
+
+[dev-dependencies]
+anyhow = { workspace = true }

@@ -1,0 +1,12 @@
+[package]
+name = "kps-dial"
+description = "KPS echo client (interop harness peer): dials an address over quic or webrtc and verifies an echo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+kps = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }

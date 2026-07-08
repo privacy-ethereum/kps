@@ -8,6 +8,9 @@ libs/go/server
 libs/go/dial
 *.key
 
+# rust
+libs/rust/target/
+
 # generated self-signed identities (server default paths)
 kps-cert.pem
 kps-key.pem
