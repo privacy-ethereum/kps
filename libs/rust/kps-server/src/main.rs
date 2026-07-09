@@ -22,7 +22,7 @@ fn parse_flags() -> Flags {
             Some((n, v)) => (n.to_string(), Some(v.to_string())),
             None => (args[i].trim_start_matches('-').to_string(), None),
         };
-        let mut take = |i: &mut usize| -> String {
+        let take = |i: &mut usize| -> String {
             if let Some(v) = &inline {
                 v.clone()
             } else {

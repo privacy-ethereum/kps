@@ -258,7 +258,7 @@ async fn pump(
                 match extract_ufrag(&pkt) {
                     Some(ufrag) => {
                         let tx = {
-                            let mut inner = entries.0.lock().unwrap();
+                            let inner = entries.0.lock().unwrap();
                             inner.by_ufrag.get(&ufrag).map(|e| e.inbox.clone())
                         };
                         let tx = match tx {
