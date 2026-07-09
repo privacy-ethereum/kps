@@ -16,6 +16,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 export const libsJs = resolve(here, '../..')
 export const repoRoot = resolve(libsJs, '../..')
 export const libsGo = join(repoRoot, 'libs', 'go')
+export const libsRust = join(repoRoot, 'libs', 'rust')
 
 // Track every tmp dir we create (Go binaries can be tens of MiB each) and remove
 // them synchronously on exit — otherwise repeated runs pile up in the OS tmp dir.
@@ -217,6 +218,82 @@ export async function spawnGoClient({ addr, transport = 'quic', message = 'hello
   let last
   for (let i = 0; i < attempts; i++) {
     last = await spawnGoClientOnce({ addr, transport, message, timeoutMs, datagram })
+    if (last.code === 0 || /echo mismatch/.test(last.err)) return last
+  }
+  return last
+}
+
+// ── Rust interop (kps-server binary + kps-dial client) ──────────────────────
+// Same contract as the Go pair: the binaries mirror cmd/server and cmd/dial.
+
+let rustChecked
+export function rustAvailable() {
+  if (rustChecked !== undefined) return rustChecked
+  try { execFileSync('cargo', ['--version'], { stdio: 'ignore' }); rustChecked = true }
+  catch { rustChecked = false }
+  return rustChecked
+}
+
+let rustBuilt
+function rustBin(name) {
+  if (!rustBuilt) {
+    // Build once per process (first run compiles the workspace; later runs are
+    // incremental). stdio piped so a compile error fails the test with output.
+    execFileSync('cargo', ['build', '--workspace'], { cwd: libsRust, stdio: 'pipe' })
+    rustBuilt = true
+  }
+  return join(libsRust, 'target', 'debug', name)
+}
+
+// Spawn the Rust kps-server (echoes streams + datagrams) on a loopback
+// OS-assigned port and resolve once it prints its dial address.
+export async function spawnRustServer() {
+  const bin = rustBin('kps-server')
+  const stateDir = mkTmp('kps-it-rust-')
+  const child = spawn(bin, ['-listen', '127.0.0.1:0', '-ip', '127.0.0.1', '-key', join(stateDir, 'kps.key')],
+    { cwd: libsRust, stdio: ['ignore', 'pipe', 'pipe'] })
+  child.stderr.on('data', () => {})
+
+  const address = await new Promise((resolve, reject) => {
+    let buf = ''
+    const timer = setTimeout(() => { try { child.kill() } catch {} ; reject(new Error('rust server: timed out printing address')) }, 15_000)
+    child.stdout.on('data', (chunk) => {
+      buf += chunk
+      const m = buf.match(/127\.0\.0\.1:\d+:[A-Za-z0-9_-]+/)
+      if (m) { clearTimeout(timer); resolve(m[0]) }
+    })
+    child.on('exit', (code) => { clearTimeout(timer); reject(new Error(`rust server exited (${code}) before printing address`)) })
+  })
+
+  return {
+    address,
+    async kill() {
+      if (!child.killed) child.kill('SIGTERM')
+      await rm(stateDir, { recursive: true, force: true }).catch(() => {})
+    },
+  }
+}
+
+function spawnRustClientOnce({ addr, transport, message, timeoutMs, datagram }) {
+  const bin = rustBin('kps-dial')
+  const args = ['-addr', addr, '-transport', transport, '-message', message,
+    '-timeout', `${Math.ceil(timeoutMs / 1000)}s`]
+  if (datagram) args.push('-datagram')
+  return new Promise((resolve) => {
+    const child = spawn(bin, args, { cwd: libsRust, stdio: ['ignore', 'pipe', 'pipe'] })
+    let out = '', err = ''
+    child.stdout.on('data', (d) => { out += d })
+    child.stderr.on('data', (d) => { err += d })
+    child.on('exit', (code) => resolve({ code, out, err }))
+    child.on('error', (e) => resolve({ code: -1, out, err: String(e) }))
+  })
+}
+
+// Run the Rust dial client, retrying failed connections like spawnGoClient.
+export async function spawnRustClient({ addr, transport = 'quic', message = 'hello-kps', timeoutMs = 15_000, attempts = 3, datagram = false }) {
+  let last
+  for (let i = 0; i < attempts; i++) {
+    last = await spawnRustClientOnce({ addr, transport, message, timeoutMs, datagram })
     if (last.code === 0 || /echo mismatch/.test(last.err)) return last
   }
   return last

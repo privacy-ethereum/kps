@@ -27,6 +27,13 @@ use crate::framing::{
 /// backpressure above it (same value as the Go implementation).
 const WRITE_BUFFER_LOW: usize = 1 << 20; // 1 MiB
 
+/// Frame-level tracing to stderr, enabled by setting KPS_DEBUG. For debugging
+/// interop issues; resolved once.
+fn kps_debug() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("KPS_DEBUG").is_some())
+}
+
 /// State shared between the data-channel callbacks and the poll fns.
 pub(crate) struct Shared {
     state: Mutex<State>,
@@ -61,6 +68,9 @@ impl Shared {
         let Some(&first) = data.first() else { return };
         let Some(t) = FrameType::from_byte(first) else { return };
         let payload = &data[1..];
+        if kps_debug() {
+            eprintln!("[kps-stream] frame in: {t:?} len={}", payload.len());
+        }
         let mut st = self.state.lock().unwrap();
         match t {
             FrameType::Data => {
@@ -165,6 +175,9 @@ impl WebrtcStream {
             dc.on_close(Box::new(move || {
                 let shared = shared.clone();
                 Box::pin(async move {
+                    if kps_debug() {
+                        eprintln!("[kps-stream] dc closed");
+                    }
                     {
                         let mut st = shared.state.lock().unwrap();
                         st.dc_closed = true;
@@ -222,8 +235,19 @@ async fn writer_task(dc: Arc<RTCDataChannel>, mut rx: mpsc::Receiver<Vec<u8>>, s
             }
             let _ = tokio::time::timeout(Duration::from_millis(100), notified).await;
         }
-        if dc.send(&Bytes::from(frame)).await.is_err() {
-            return;
+        let kind = frame.first().copied();
+        match dc.send(&Bytes::from(frame)).await {
+            Ok(n) => {
+                if kps_debug() {
+                    eprintln!("[kps-stream] frame out: type={kind:?} sent={n}");
+                }
+            }
+            Err(e) => {
+                if kps_debug() {
+                    eprintln!("[kps-stream] frame out FAILED: type={kind:?} err={e}");
+                }
+                return;
+            }
         }
     }
 }
