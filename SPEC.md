@@ -1,8 +1,8 @@
 # KPS Protocol Specification (draft v0)
 
 > **Status:** draft for review. This document defines the wire-level and
-> behavioural contract that every KPS implementation (Go, TypeScript, future
-> Rust/Swift/Kotlin) must satisfy. The language libraries are *implementations
+> behavioural contract that every KPS implementation (Go, TypeScript, Rust,
+> future Swift/Kotlin) must satisfy. The language libraries are *implementations
 > of this spec*, not the spec itself. Where this document and a library
 > disagree, this document is the intended source of truth and the library is a
 > bug.

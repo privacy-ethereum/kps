@@ -24,7 +24,7 @@ identity *is* its certificate, and clients pin its hash out-of-band (in code, in
 a config file, in a QR code, however).
 
 WebRTC makes it work from a browser today; QUIC makes it work from native
-clients (Go, and later Rust/CLI/mobile) against the same listener. One
+clients (Go, Rust, and later CLI/mobile) against the same listener. One
 self-signed certificate serves both — it's presented in the WebRTC DTLS
 handshake and the QUIC TLS 1.3 handshake, and a single certhash pins both.
 
@@ -51,10 +51,10 @@ What's intentionally **not** here:
 
 ## What works
 
-Browser, native-Go, and Node clients interoperate with a Go **or** Node
-(`@kpstreams/server`) listener, end-to-end encrypted. Both transports —
-**WebRTC** (browser) and **QUIC** (native / Node) — share one UDP port and one
-address, with the API hiding which is in use.
+Browser, native-Go, native-Rust, and Node clients interoperate with a Go, Rust,
+**or** Node (`@kpstreams/server`) listener, end-to-end encrypted. Both
+transports — **WebRTC** (browser) and **QUIC** (native / Node) — share one UDP
+port and one address, with the API hiding which is in use.
 
 - **Unnamed, multiplexed byte streams** — reliable, ordered, no message
   boundaries; QUIC-like lifecycle (`closeWrite` → EOF, `cancelRead`, `resetWrite`).
@@ -65,21 +65,23 @@ address, with the API hiding which is in use.
   certhash (no recomputable fingerprint), the QUIC ALPN is non-identifying, and
   the certificate carries no KPS-identifying metadata (see `SECURITY.md`).
 
-An interop test matrix exercises all of this: Go tests cover the Go library
-(multi-conn, multi-stream, the stream lifecycle, datagrams, connection-close
-codes, and both transports on one port simultaneously); a Node `node:test` suite
-drives `@kpstreams/quic-client` and `@kpstreams/server` end-to-end and
-cross-implementation against the Go server (streams, datagrams, backpressure,
-certhash-pinning rejection, abort); and a Playwright-driven Chromium covers the
-real browser ↔ Go **and** browser ↔ JS-server paths. CI runs the lot.
+An interop test matrix exercises all of this: Go and Rust tests cover their
+libraries (multi-conn, multi-stream, the stream lifecycle, datagrams,
+connection-close codes, and both transports on one port simultaneously); a Node
+`node:test` suite drives `@kpstreams/quic-client` and `@kpstreams/server`
+end-to-end and cross-implementation against the Go and Rust servers (streams,
+datagrams, backpressure, certhash-pinning rejection, abort), plus Go ↔ Rust
+both ways; and a Playwright-driven Chromium covers the real browser ↔ Go,
+browser ↔ JS-server, and browser ↔ Rust paths. CI runs the lot.
 
 ## Layout
 
 ```
 libs/js/        TypeScript npm packages (@kpstreams/*): core, webrtc-client, quic-client, server
 libs/go/        Go library + cmd/server & cmd/dial CLIs — import "github.com/privacy-ethereum/kps/libs/go"
+libs/rust/      Rust library (kps) + kps-server & kps-dial CLIs
 demos/chat/     Chat + eth-rpc demo (server-go + web) consuming the libraries
-tests/interop/  Playwright interop test — a browser dials the Go and JS servers
+tests/interop/  Playwright interop test — a browser dials the Go, JS and Rust servers
 ```
 
 ## Quick taste
@@ -111,6 +113,17 @@ s, _ := conn.OpenStream(ctx)
 s.Write([]byte("hello"))
 s.CloseWrite()
 io.Copy(os.Stdout, s) // "hello"
+```
+
+Native Rust client (QUIC by default):
+
+```rust
+let conn = kps::dial("192.168.x.y:4242:uEi...").await?;
+let mut s = conn.open_stream().await?;
+s.write_all(b"hello").await?;
+s.close_write().await?;
+let mut echoed = Vec::new();
+s.read_to_end(&mut echoed).await?; // "hello"
 ```
 
 Browser (WebRTC):

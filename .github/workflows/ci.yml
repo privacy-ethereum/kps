@@ -28,17 +28,39 @@ jobs:
         working-directory: demos/chat/server-go
         run: go build ./...
 
+  rust:
+    name: Rust (lib + integration)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: libs/rust
+      - name: Build + test (libs/rust)
+        working-directory: libs/rust
+        # Same real-UDP requirement as the Go job. The build fetches the
+        # patched webrtc-sctp from this repo's vendor/webrtc-sctp branch
+        # ([patch.crates-io] in libs/rust/Cargo.toml).
+        run: |
+          cargo build --workspace
+          cargo test --workspace
+
   js:
     name: JS (build + unit + integration)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       # The integration suite (test:integration) drives the QUIC client/server
-      # and shells out to the Go lib (server + cmd/dial) for cross-impl coverage,
-      # so both toolchains are needed here.
+      # and shells out to the Go and Rust libs (servers + dial clients) for
+      # cross-impl coverage, so all three toolchains are needed here.
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: libs/rust
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -57,13 +79,17 @@ jobs:
         run: npm run test:integration
 
   interop:
-    name: Interop (browser WebRTC ↔ Go)
+    name: Interop (browser WebRTC ↔ Go/JS/Rust)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: libs/rust
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

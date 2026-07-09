@@ -16,6 +16,8 @@ const coreDist = join(clientDir, 'packages/core/dist')
 const webrtcClientDist = join(clientDir, 'packages/webrtc-client/dist')
 const serverDir = join(repoRoot, 'libs/go')
 const serverBin = join(serverDir, 'server')
+const rustDir = join(repoRoot, 'libs/rust')
+const rustServerBin = join(rustDir, 'target/debug/kps-server')
 const jsServerScript = join(here, 'kps-js-server.mjs')
 const pageDir = join(here, 'page')
 const stateFilePath = join(here, '.run-state.json')
@@ -49,6 +51,11 @@ async function buildClient() {
 async function buildServer() {
   console.log('[setup] go build ./cmd/server...')
   await run('go', ['build', '-o', 'server', './cmd/server'], { cwd: serverDir })
+}
+
+async function buildRustServer() {
+  console.log('[setup] cargo build -p kps-server...')
+  await run('cargo', ['build', '-p', 'kps-server'], { cwd: rustDir })
 }
 
 // Route bare-specifier package roots to their dist trees; everything else is
@@ -137,26 +144,32 @@ async function stopChild(child) {
 export default async function globalSetup() {
   await buildClient()
   await buildServer()
+  await buildRustServer()
 
   const stateDir = await mkdtemp(join(tmpdir(), 'kps-it-'))
   const go = await startAddressServer('go-server', serverBin,
     ['-listen', '127.0.0.1:0', '-key', join(stateDir, 'kps.key'), '-ip', '127.0.0.1'],
     { cwd: serverDir })
   const js = await startAddressServer('js-server', process.execPath, [jsServerScript])
+  const rust = await startAddressServer('rust-server', rustServerBin,
+    ['-listen', '127.0.0.1:0', '-key', join(stateDir, 'kps-rust.key'), '-ip', '127.0.0.1'],
+    { cwd: rustDir })
 
   const httpServer = await startStaticServer()
   const port = httpServer.address().port
   const baseUrl = `http://127.0.0.1:${port}`
   await writeFile(stateFilePath, JSON.stringify(
-    { goAddress: go.address, jsAddress: js.address, baseUrl }, null, 2))
-  console.log(`[setup] go server:  ${go.address}`)
-  console.log(`[setup] js server:  ${js.address}`)
+    { goAddress: go.address, jsAddress: js.address, rustAddress: rust.address, baseUrl }, null, 2))
+  console.log(`[setup] go server:   ${go.address}`)
+  console.log(`[setup] js server:   ${js.address}`)
+  console.log(`[setup] rust server: ${rust.address}`)
   console.log(`[setup] static site: ${baseUrl}`)
 
   return async () => {
     await new Promise(res => httpServer.close(() => res()))
     await stopChild(go.child)
     await stopChild(js.child)
+    await stopChild(rust.child)
     try { await rm(stateDir, { recursive: true, force: true }) } catch {}
     try { await rm(stateFilePath, { force: true }) } catch {}
   }

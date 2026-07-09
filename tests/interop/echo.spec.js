@@ -4,13 +4,14 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const { goAddress, jsAddress, baseUrl } = JSON.parse(readFileSync(join(here, '.run-state.json'), 'utf8'))
+const { goAddress, jsAddress, rustAddress, baseUrl } = JSON.parse(readFileSync(join(here, '.run-state.json'), 'utf8'))
 
 // The real-browser WebRTC leg of the matrix: a Chromium page runs the JS
-// webrtc-client (the actual package, no polyfill) against BOTH server
+// webrtc-client (the actual package, no polyfill) against ALL server
 // implementations over the single advertised address. Headless node:test
-// covers QUIC and the Go-client cross-impl paths (see libs/js/test/integration).
-for (const [name, address] of [['Go server', goAddress], ['@kpstreams/server', jsAddress]]) {
+// covers QUIC and the Go/Rust-client cross-impl paths (see
+// libs/js/test/integration).
+for (const [name, address] of [['Go server', goAddress], ['@kpstreams/server', jsAddress], ['Rust server', rustAddress]]) {
   test(`browser webrtc-client dials ${name} and echoes a message`, async ({ page }) => {
     page.on('pageerror', err => console.error('[page error]', err))
     page.on('console', msg => {
