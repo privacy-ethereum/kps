@@ -62,7 +62,7 @@ matrix (Rust ↔ Go ↔ JS ↔ browser) lives in `libs/js/test/integration/` and
 ## Vendored webrtc-sctp patch
 
 `[patch.crates-io]` in `Cargo.toml` swaps `webrtc-sctp` for the
-`vendor/webrtc-sctp` orphan branch of this repo: verbatim crates.io 0.13.0
+`vendor/webrtc-sctp` orphan branch of this repo (pinned by rev): verbatim crates.io 0.13.0
 plus a drain-the-reassembly-queue-before-honoring-`read_shutdown` fix (grep
 `KPS PATCH`). Without it, a peer that writes and promptly closes a data
 channel loses data at a webrtc-rs receiver ~10% of the time. Remove when

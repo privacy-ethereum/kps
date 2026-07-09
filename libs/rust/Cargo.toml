@@ -18,6 +18,7 @@ anyhow = "1"
 # read_shutdown) pending upstream: without it, a peer that writes and promptly
 # closes a data channel loses data at a webrtc-rs receiver ~10% of the time.
 # The patched source lives on the orphan branch `vendor/webrtc-sctp` of this
-# repo — verbatim crates.io 0.13.0 plus one commit (grep "KPS PATCH").
+# repo — verbatim crates.io 0.13.0 plus one commit (grep "KPS PATCH") — pinned
+# by rev so builds don't float with the branch.
 [patch.crates-io]
-webrtc-sctp = { git = "https://github.com/privacy-ethereum/kps.git", branch = "vendor/webrtc-sctp" }
+webrtc-sctp = { git = "https://github.com/privacy-ethereum/kps.git", rev = "2d730447917bbf775cda0ad967ea3e737de46ef7" }
