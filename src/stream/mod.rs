@@ -181,10 +181,18 @@ impl Stream {
     /// Returns `(0, PayloadProtocolIdentifier::Unknown)` if the reading half of this stream is shutdown or it (the stream) was reset.
     pub async fn read_sctp(&self, p: &mut [u8]) -> Result<(usize, PayloadProtocolIdentifier)> {
         loop {
-            if self.read_shutdown.load(Ordering::SeqCst) {
-                return Ok((0, PayloadProtocolIdentifier::Unknown));
-            }
+            // KPS PATCH (drain-before-shutdown): register for wakeups BEFORE
+            // checking state so a shutdown/notify between the queue read and
+            // the await cannot be lost.
+            let notified = self.read_notifier.notified();
 
+            // KPS PATCH: drain the reassembly queue BEFORE honoring
+            // read_shutdown. An incoming stream reset (RFC 6525) is only
+            // processed once all data up to sender_last_tsn has been received,
+            // so chunks already delivered to the reassembly queue must be
+            // readable after the reset — otherwise a peer that writes then
+            // promptly closes the channel loses data at the receiver. This
+            // matches pion/sctp, which reads the queue first.
             let result = {
                 let mut reassembly_queue = self.reassembly_queue.lock().await;
                 reassembly_queue.read(p)
@@ -193,8 +201,11 @@ impl Stream {
             match result {
                 Ok(_) | Err(Error::ErrShortBuffer { .. }) => return result,
                 Err(_) => {
+                    if self.read_shutdown.load(Ordering::SeqCst) {
+                        return Ok((0, PayloadProtocolIdentifier::Unknown));
+                    }
                     // wait for the next chunk to become available
-                    self.read_notifier.notified().await;
+                    notified.await;
                 }
             }
         }
