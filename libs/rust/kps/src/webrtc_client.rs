@@ -59,7 +59,14 @@ pub async fn dial_webrtc(addr: &str) -> Result<Box<dyn Conn>> {
 
     // WebrtcConn::new also creates the negotiated datagram channel (ID 1),
     // which must exist before the offer for the same reason.
-    let conn = WebrtcConn::new(pc.clone(), Some(control)).await?;
+    let remote: std::net::SocketAddr = format!(
+        "{}:{}",
+        if a.ip.contains(':') { format!("[{}]", a.ip) } else { a.ip.clone() },
+        a.port
+    )
+    .parse()
+    .map_err(|e| Error::Address(format!("bad ip in address: {e}")))?;
+    let conn = WebrtcConn::new(pc.clone(), Some(control), remote).await?;
     let close_state = conn.close_state.clone();
 
     let (connected_tx, connected_rx) = tokio::sync::oneshot::channel::<()>();

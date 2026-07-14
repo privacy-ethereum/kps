@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 )
 
 // DatagramTooLargeError is returned by SendDatagram when the payload exceeds the
@@ -39,6 +40,11 @@ type Conn interface {
 	// close, non-nil otherwise. Best-effort — a reason is only available where
 	// the transport carries one (QUIC), so WebRTC failures surface generically.
 	Err() error
+	// RemoteAddr returns the peer's UDP endpoint (e.g. for per-IP policy such
+	// as rate limiting). It reflects the endpoint observed at connection
+	// establishment and MAY change over the connection's life (QUIC path
+	// migration, ICE renomination); on the dial side it is the dialed endpoint.
+	RemoteAddr() net.Addr
 
 	// Datagrams are unreliable, unordered, size-limited messages available on
 	// every connection (SPEC §7). There is a per-connection size limit; an

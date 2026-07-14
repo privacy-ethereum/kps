@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"strings"
 	"sync"
 
@@ -74,7 +75,7 @@ func DialWebRTC(ctx context.Context, addr string) (Conn, error) {
 		return nil, err
 	}
 
-	conn := newConn(pc, control)
+	conn := newConn(pc, control, &net.UDPAddr{IP: net.ParseIP(a.IP), Port: a.Port})
 	connected := make(chan struct{})
 	var once sync.Once
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {

@@ -60,7 +60,8 @@ export function startWebRTCBackend(args: {
 
     // Only delete our own entry (a later ufrag reuse must not be clobbered).
     const drop = () => { if (peers.get(ufrag) === pc) peers.delete(ufrag) }
-    const conn = new Connection(pc)
+    // The remote endpoint is the client's first STUN source.
+    const conn = new Connection(pc, { ip: req.host, port: req.port })
     conn.ready.then(() => { if (!closed) onConnection(conn) }).catch(() => { /* failed before open */ })
     conn.closed.then(drop).catch(drop)
 

@@ -101,6 +101,11 @@ familiarity.
   lifetimes).
 - Either side MAY open streams. Stream-open and stream-accept are symmetric
   primitives, not client-only.
+- A connection exposes the peer's **remote UDP endpoint** (so acceptors can
+  apply per-IP policy such as rate limits). It reflects the endpoint observed at
+  connection establishment — the dialed endpoint on the dial side; the QUIC
+  handshake source or the first STUN binding's source on the accept side — and
+  MAY change over the connection's life (QUIC path migration, ICE renomination).
 
 ---
 

@@ -49,6 +49,14 @@ export interface Stream {
 // Connection — a kps session to a single server (SPEC §4).
 export interface Connection {
   readonly closed: Promise<ConnCloseInfo>
+
+  // The peer's UDP endpoint (e.g. for per-IP policy such as rate limiting).
+  // Reflects the endpoint observed at connection establishment and MAY change
+  // over the connection's life (QUIC path migration, ICE renomination); on the
+  // dial side it is the dialed endpoint. Mirrors Go's RemoteAddr / Rust's
+  // remote_addr.
+  readonly remoteAddress: { ip: string; port: number }
+
   openStream(opts?: OpenStreamOptions): Promise<Stream>
   acceptStream(opts?: AcceptStreamOptions): Promise<Stream>
   close(reason?: KpsReason): Promise<void>

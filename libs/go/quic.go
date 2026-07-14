@@ -92,6 +92,8 @@ func (c *quicConn) CloseWithError(code ErrorCode) error {
 
 func (c *quicConn) Closed() <-chan struct{} { return c.qc.Context().Done() }
 
+func (c *quicConn) RemoteAddr() net.Addr { return c.qc.RemoteAddr() }
+
 func (c *quicConn) Err() error {
 	select {
 	case <-c.qc.Context().Done():

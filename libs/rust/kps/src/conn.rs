@@ -68,6 +68,9 @@ pub(crate) struct WebrtcConn {
     dg: Arc<RTCDataChannel>,
     dg_rx: tokio::sync::Mutex<mpsc::Receiver<Vec<u8>>>,
     control: Arc<RTCDataChannel>,
+    /// The peer's UDP endpoint: the first STUN source on the accept side, the
+    /// dialed endpoint on the dial side.
+    remote: std::net::SocketAddr,
     pub(crate) close_state: Arc<CloseState>,
 }
 
@@ -75,10 +78,12 @@ impl WebrtcConn {
     /// Wraps a PeerConnection. `control` is the reserved reliable channel
     /// (ID 0): the client passes the one it created pre-offer (to force the
     /// SCTP m-line); the server passes `None` and we create our side here. It
-    /// carries CONNECTION_CLOSE (SPEC §8).
+    /// carries CONNECTION_CLOSE (SPEC §8). `remote` is the peer's UDP endpoint
+    /// (see [`Conn::remote_addr`]).
     pub(crate) async fn new(
         pc: Arc<RTCPeerConnection>,
         control: Option<Arc<RTCDataChannel>>,
+        remote: std::net::SocketAddr,
     ) -> Result<Self> {
         let close_state = Arc::new(CloseState::new());
 
@@ -157,6 +162,7 @@ impl WebrtcConn {
             dg,
             dg_rx: tokio::sync::Mutex::new(dg_rx),
             control,
+            remote,
             close_state,
         })
     }
@@ -243,6 +249,10 @@ impl Conn for WebrtcConn {
             return None; // still open
         }
         self.close_state.err.lock().unwrap().map(Error::Stream)
+    }
+
+    fn remote_addr(&self) -> std::net::SocketAddr {
+        self.remote
     }
 
     async fn send_datagram(&self, p: &[u8]) -> Result<()> {

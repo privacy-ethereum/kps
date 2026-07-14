@@ -37,6 +37,12 @@ pub trait Conn: Send + Sync {
     /// transport carries one.
     fn err(&self) -> Option<Error>;
 
+    /// The peer's UDP endpoint (e.g. for per-IP policy such as rate limiting).
+    /// It reflects the endpoint observed at connection establishment and MAY
+    /// change over the connection's life (QUIC path migration, ICE
+    /// renomination); on the dial side it is the dialed endpoint.
+    fn remote_addr(&self) -> std::net::SocketAddr;
+
     /// Sends an unreliable, unordered, size-limited datagram (SPEC §7).
     /// An oversized payload fails with [`Error::DatagramTooLarge`] reporting
     /// the current limit. Delivery is best-effort.

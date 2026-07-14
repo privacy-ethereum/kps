@@ -242,7 +242,7 @@ func (l *Listener) pump() {
 				l.mu.Lock()
 				entry = l.byUfrag[ufrag]
 				if entry == nil {
-					entry = l.spawnPC(ufrag, srcAddr.Addr())
+					entry = l.spawnPC(ufrag, srcAddr)
 					if entry != nil {
 						l.byUfrag[ufrag] = entry
 					}
@@ -296,7 +296,8 @@ func extractUfrag(p []byte) string {
 	return parts[0]
 }
 
-func (l *Listener) spawnPC(ufrag string, clientIP netip.Addr) *pcEntry {
+func (l *Listener) spawnPC(ufrag string, srcAddr netip.AddrPort) *pcEntry {
+	clientIP := srcAddr.Addr()
 	inbox := make(chan packetIn, 256)
 
 	// The shared socket is dual-stack ([::]), so its LocalAddr is always v6.
@@ -333,8 +334,9 @@ func (l *Listener) spawnPC(ufrag string, clientIP netip.Addr) *pcEntry {
 
 	// newConn owns pc.OnDataChannel: each client-opened channel surfaces as a
 	// Stream on the Conn's accept queue. It also creates our side of the
-	// negotiated control (ID 0) and datagram (ID 1) channels (SPEC §8).
-	kc := newConn(pc, nil)
+	// negotiated control (ID 0) and datagram (ID 1) channels (SPEC §8). The
+	// remote endpoint is the client's first STUN source.
+	kc := newConn(pc, nil, net.UDPAddrFromAddrPort(srcAddr))
 
 	var acceptOnce sync.Once
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {

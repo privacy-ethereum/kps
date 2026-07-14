@@ -78,6 +78,9 @@ export class Connection implements CoreConnection {
   /** Resolves once the peer connection reaches 'connected'; rejects if it fails first. */
   readonly ready: Promise<void>
 
+  // The client's first STUN source (see the core Connection.remoteAddress doc).
+  readonly remoteAddress: { ip: string; port: number }
+
   #pc: PeerConnection
   #control!: DataChannel
   #dg: ReturnType<typeof makeDatagramChannel>
@@ -91,8 +94,9 @@ export class Connection implements CoreConnection {
   #closeFired = false
   #readySettled = false
 
-  constructor(pc: PeerConnection) {
+  constructor(pc: PeerConnection, remote: { ip: string; port: number }) {
     this.#pc = pc
+    this.remoteAddress = remote
     this.closed = new Promise<ConnCloseInfo>(res => { this.#closeResolve = res })
     this.ready = new Promise<void>((res, rej) => { this.#readyResolve = res; this.#readyReject = rej })
 

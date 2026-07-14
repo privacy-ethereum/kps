@@ -194,6 +194,10 @@ impl Conn for QuicConn {
         normalize_close(self.conn.close_reason()?)
     }
 
+    fn remote_addr(&self) -> std::net::SocketAddr {
+        self.conn.remote_address()
+    }
+
     async fn send_datagram(&self, p: &[u8]) -> Result<()> {
         match self.conn.send_datagram(Bytes::copy_from_slice(p)) {
             Ok(()) => Ok(()),

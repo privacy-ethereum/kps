@@ -102,6 +102,14 @@ export class QuicConnection implements CoreConnection {
   #incoming: CoreStream[] = []
   #waiters: Array<{ resolve: (s: CoreStream) => void; reject: (e: Error) => void }> = []
 
+  /** The peer's UDP endpoint (see the core Connection.remoteAddress doc). */
+  get remoteAddress(): { ip: string; port: number } {
+    // A dual-stack socket reports v4 peers as v4-mapped IPv6; normalize.
+    const host = String(this.#qc.remoteHost)
+    const ip = host.startsWith('::ffff:') && host.includes('.') ? host.slice(7) : host
+    return { ip, port: Number(this.#qc.remotePort) }
+  }
+
   constructor(qc: QUICConnection) {
     this.#qc = qc
     this.#dg = makeDatagramChannel(qc)

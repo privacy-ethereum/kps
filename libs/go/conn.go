@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,6 +27,10 @@ type webrtcConn struct {
 
 	control *webrtc.DataChannel // reserved reliable channel (ID 2): CONNECTION_CLOSE
 
+	// remote is the peer's UDP endpoint: the first STUN source on the accept
+	// side, the dialed endpoint on the dial side.
+	remote net.Addr
+
 	closeOnce sync.Once
 	closedCh  chan struct{}
 	closeErr  error
@@ -34,12 +39,13 @@ type webrtcConn struct {
 // newConn wraps a connected PeerConnection. `control` is the reserved reliable
 // channel (ID 0): the client passes the one it created pre-offer (to force the
 // SCTP m-line); the server passes nil and newConn creates its side. It carries
-// CONNECTION_CLOSE (SPEC §8).
-func newConn(pc *webrtc.PeerConnection, control *webrtc.DataChannel) *webrtcConn {
+// CONNECTION_CLOSE (SPEC §8). `remote` is the peer's UDP endpoint (RemoteAddr).
+func newConn(pc *webrtc.PeerConnection, control *webrtc.DataChannel, remote net.Addr) *webrtcConn {
 	c := &webrtcConn{
 		pc:       pc,
 		streamCh: make(chan *webrtcStream, 16),
 		dgInbox:  make(chan []byte, 256),
+		remote:   remote,
 		closedCh: make(chan struct{}),
 	}
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
@@ -190,6 +196,8 @@ func (c *webrtcConn) CloseWithError(code ErrorCode) error {
 }
 
 func (c *webrtcConn) Closed() <-chan struct{} { return c.closedCh }
+
+func (c *webrtcConn) RemoteAddr() net.Addr { return c.remote }
 
 func (c *webrtcConn) Err() error {
 	select {

@@ -384,8 +384,9 @@ async fn spawn_pc(
 
     // WebrtcConn owns on_data_channel (client-opened channels surface as
     // streams) and creates our side of the negotiated control (ID 0) and
-    // datagram (ID 1) channels (SPEC §8).
-    let conn = WebrtcConn::new(pc.clone(), None).await?;
+    // datagram (ID 1) channels (SPEC §8). The remote endpoint is the client's
+    // first STUN source.
+    let conn = WebrtcConn::new(pc.clone(), None, client_addr).await?;
     let close_state = conn.close_state.clone();
     let conn_slot = Arc::new(Mutex::new(Some(conn)));
 

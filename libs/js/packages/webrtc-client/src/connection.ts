@@ -96,6 +96,9 @@ function makeDatagramChannel(dg: RTCDataChannel) {
 export class Connection implements CoreConnection {
   readonly closed: Promise<ConnCloseInfo>
 
+  // The dialed endpoint (see the core Connection.remoteAddress doc).
+  readonly remoteAddress: { ip: string; port: number }
+
   #pc: RTCPeerConnection
   #control!: RTCDataChannel
   #dg: ReturnType<typeof makeDatagramChannel>
@@ -108,8 +111,9 @@ export class Connection implements CoreConnection {
 
   // `control` is the reserved reliable channel (ID 0) dial() created before the
   // offer (to force the SCTP m-line); it also carries CONNECTION_CLOSE.
-  private constructor(pc: RTCPeerConnection, control: RTCDataChannel) {
+  private constructor(pc: RTCPeerConnection, control: RTCDataChannel, remote: { ip: string; port: number }) {
     this.#pc = pc
+    this.remoteAddress = remote
     this.closed = new Promise<ConnCloseInfo>(res => { this.#closeResolve = res })
 
     // A message on the control channel is a CONNECTION_CLOSE — record the peer's
@@ -172,7 +176,7 @@ export class Connection implements CoreConnection {
     await pc.setLocalDescription({ type: offer.type, sdp: rewriteOfferUfrag(offer.sdp ?? '', ufrag, pwd) })
     await pc.setRemoteDescription({ type: 'answer', sdp: synthesizeAnswer(addr, ufrag, pwd) })
 
-    const conn = new Connection(pc, control)
+    const conn = new Connection(pc, control, { ip: addr.ip, port: addr.port })
     await conn.#waitForOpen(signal)
     return conn
   }
