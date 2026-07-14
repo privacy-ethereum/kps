@@ -39,11 +39,15 @@ export async function loadOrCreateIdentity(
 
   const alg: EcKeyGenParams & { hash: string } = { name: 'ECDSA', namedCurve: 'P-256', hash: 'SHA-256' }
   const keys = await crypto.subtle.generateKey(alg, true, ['sign', 'verify'])
+  // The certificate is observable in cleartext on the DTLS 1.2 wire, so it
+  // carries no KPS-identifying metadata: a random serial and an EMPTY subject
+  // (SPEC §3, SECURITY.md §3). Lifetime ~200 years, matching Go/Rust —
+  // rationale and the residual validity-period concern: see SECURITY.md.
   const cert = await x509.X509CertificateGenerator.createSelfSigned({
     serialNumber: randomBytes(16).toString('hex'),
-    name: 'CN=kps',
-    notBefore: new Date(Date.now() - 60_000),
-    notAfter: new Date(Date.now() + 10 * 365 * 24 * 60 * 60 * 1000),
+    name: '',
+    notBefore: new Date(Date.now() - 60 * 60 * 1000),
+    notAfter: new Date(Date.now() + 200 * 365 * 24 * 60 * 60 * 1000),
     keys,
     signingAlgorithm: alg,
   })
