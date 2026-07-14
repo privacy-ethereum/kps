@@ -20,5 +20,6 @@ anyhow = "1"
 # The patched source lives on the orphan branch `vendor/webrtc-sctp` of this
 # repo — verbatim crates.io 0.13.0 plus one commit (grep "KPS PATCH") — pinned
 # by rev so builds don't float with the branch.
+# Upstream: https://github.com/webrtc-rs/webrtc/issues/816
 [patch.crates-io]
 webrtc-sctp = { git = "https://github.com/privacy-ethereum/kps.git", rev = "2d730447917bbf775cda0ad967ea3e737de46ef7" }
