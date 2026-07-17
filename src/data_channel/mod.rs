@@ -134,47 +134,7 @@ impl RTCDataChannel {
                 }
             }
 
-            let channel_type;
-            let reliability_parameter;
-
-            match (self.max_retransmits, self.max_packet_lifetime) {
-                (None, None) => {
-                    reliability_parameter = 0u32;
-                    if self.ordered {
-                        channel_type = ChannelType::Reliable;
-                    } else {
-                        channel_type = ChannelType::ReliableUnordered;
-                    }
-                }
-
-                (Some(max_retransmits), _) => {
-                    reliability_parameter = max_retransmits as u32;
-                    if self.ordered {
-                        channel_type = ChannelType::PartialReliableRexmit;
-                    } else {
-                        channel_type = ChannelType::PartialReliableRexmitUnordered;
-                    }
-                }
-
-                (None, Some(max_packet_lifetime)) => {
-                    reliability_parameter = max_packet_lifetime as u32;
-                    if self.ordered {
-                        channel_type = ChannelType::PartialReliableTimed;
-                    } else {
-                        channel_type = ChannelType::PartialReliableTimedUnordered;
-                    }
-                }
-            }
-
-            let cfg = data::data_channel::Config {
-                channel_type,
-                priority: data::message::message_channel_open::CHANNEL_PRIORITY_NORMAL,
-                reliability_parameter,
-                label: self.label.clone(),
-                protocol: self.protocol.clone(),
-                negotiated: self.negotiated,
-                max_message_size: association.max_message_size(),
-            };
+            let cfg = self.build_data_channel_config(association.max_message_size());
 
             if !self.negotiated {
                 self.id.store(
@@ -269,6 +229,84 @@ impl RTCDataChannel {
             let mut f = handler.lock().await;
             f(msg).await;
         }
+    }
+
+    /// KPS PATCH: the reliability config this channel would dial/open with
+    /// (extracted from open() so attach_negotiated_stream stays identical).
+    pub(crate) fn build_data_channel_config(
+        &self,
+        max_message_size: u32,
+    ) -> data::data_channel::Config {
+        let channel_type;
+        let reliability_parameter;
+
+        match (self.max_retransmits, self.max_packet_lifetime) {
+            (None, None) => {
+                reliability_parameter = 0u32;
+                if self.ordered {
+                    channel_type = ChannelType::Reliable;
+                } else {
+                    channel_type = ChannelType::ReliableUnordered;
+                }
+            }
+
+            (Some(max_retransmits), _) => {
+                reliability_parameter = max_retransmits as u32;
+                if self.ordered {
+                    channel_type = ChannelType::PartialReliableRexmit;
+                } else {
+                    channel_type = ChannelType::PartialReliableRexmitUnordered;
+                }
+            }
+
+            (None, Some(max_packet_lifetime)) => {
+                reliability_parameter = max_packet_lifetime as u32;
+                if self.ordered {
+                    channel_type = ChannelType::PartialReliableTimed;
+                } else {
+                    channel_type = ChannelType::PartialReliableTimedUnordered;
+                }
+            }
+        }
+
+        data::data_channel::Config {
+            channel_type,
+            priority: data::message::message_channel_open::CHANNEL_PRIORITY_NORMAL,
+            reliability_parameter,
+            label: self.label.clone(),
+            protocol: self.protocol.clone(),
+            negotiated: self.negotiated,
+            max_message_size,
+        }
+    }
+
+    /// KPS PATCH: attach a remotely-created SCTP stream to this NEGOTIATED
+    /// channel. When the remote's first message arrives before our open()
+    /// runs, the incoming DATA creates the stream inside the association and
+    /// open()'s open_stream() then fails with ErrStreamAlreadyExist — leaving
+    /// the channel permanently unattached and the stream misrouted to the
+    /// DCEP accept path. The accept loop routes such streams here instead.
+    pub(crate) async fn attach_negotiated_stream(
+        &self,
+        stream: Arc<sctp::stream::Stream>,
+        max_message_size: u32,
+    ) {
+        use sctp::chunk::chunk_payload_data::PayloadProtocolIdentifier;
+        let cfg = self.build_data_channel_config(max_message_size);
+        stream.set_default_payload_type(PayloadProtocolIdentifier::Binary);
+        let dc = data::data_channel::DataChannel::new(stream, cfg);
+        // buffered_amount_low_threshold and on_buffered_amount_low might be
+        // set earlier (mirrors open()).
+        dc.set_buffered_amount_low_threshold(
+            self.buffered_amount_low_threshold.load(Ordering::SeqCst),
+        );
+        {
+            let mut on_buffered_amount_low = self.on_buffered_amount_low.lock().await;
+            if let Some(f) = on_buffered_amount_low.take() {
+                dc.on_buffered_amount_low(f);
+            }
+        }
+        self.handle_open(Arc::new(dc)).await;
     }
 
     pub(crate) async fn handle_open(&self, dc: Arc<data::data_channel::DataChannel>) {

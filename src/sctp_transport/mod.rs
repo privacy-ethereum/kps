@@ -219,39 +219,85 @@ impl RTCSctpTransport {
     }
 
     async fn accept_data_channels(param: AcceptDataChannelParams) {
-        let dcs = param.data_channels.lock().await;
-        let mut existing_data_channels = Vec::new();
-        for dc in dcs.iter() {
-            if let Some(dc) = dc.data_channel.lock().await.clone() {
-                existing_data_channels.push(dc);
-            }
-        }
-        drop(dcs);
-
         loop {
-            let dc = tokio::select! {
+            // KPS PATCH: accept at the SCTP level, then classify the stream
+            // against the CURRENTLY registered channels. Upstream snapshotted
+            // "existing" channels once, before the peer connection had opened
+            // pre-registered NEGOTIATED channels (that open pass runs only
+            // after SctpTransport::start() returns, while this task is
+            // spawned inside start()). A remote message arriving on a
+            // negotiated stream in that window (a) missed the snapshot and
+            // (b) had already created the stream inside the association, so
+            // the channel's own open() failed with ErrStreamAlreadyExist —
+            // the stream was then parsed as DCEP, failed with
+            // InvalidMessageType, and silently killed this accept loop.
+            let stream = tokio::select! {
                 _ = param.notify_rx.notified() => break,
-                result = DataChannel::accept(
-                    &param.sctp_association,
-                    data::data_channel::Config {
-                        max_message_size: param.sctp_association.max_message_size(),
-                        ..data::data_channel::Config::default()
-                    },
-                    &existing_data_channels,
-                ) => {
-                    match result {
-                        Ok(dc) => dc,
-                        Err(err) => {
-                            if data::Error::ErrStreamClosed == err {
-                                log::error!("Failed to accept data channel: {err}");
-                                if let Some(handler) = &*param.on_error_handler.load() {
-                                    let mut f = handler.lock().await;
-                                    f(err.into()).await;
-                                }
-                            }
+                stream = param.sctp_association.accept_stream() => match stream {
+                    Some(stream) => stream,
+                    None => break,
+                }
+            };
+            let stream_id = stream.stream_identifier();
+
+            // A stream matching a registered NEGOTIATED channel belongs to
+            // that channel, DCEP-less by definition: adopt it (or ignore it
+            // if the channel is already attached). It must not go through the
+            // DCEP server handshake below.
+            let mut claimed = false;
+            {
+                let dcs = param.data_channels.lock().await;
+                for rtc_dc in dcs.iter() {
+                    if rtc_dc.negotiated() && rtc_dc.id() == stream_id {
+                        if rtc_dc.data_channel.lock().await.is_none() {
+                            rtc_dc
+                                .attach_negotiated_stream(
+                                    Arc::clone(&stream),
+                                    param.sctp_association.max_message_size(),
+                                )
+                                .await;
+                        }
+                        claimed = true;
+                        break;
+                    }
+                    // An already-attached channel with this stream id (id
+                    // reuse) also owns the stream's data via its read loop.
+                    if let Some(inner) = &*rtc_dc.data_channel.lock().await {
+                        if inner.stream_identifier() == stream_id {
+                            claimed = true;
                             break;
                         }
                     }
+                }
+            }
+            if claimed {
+                continue;
+            }
+
+            // DCEP path (replicates data::DataChannel::accept minus its
+            // accept_stream + stale existing-channel snapshot).
+            stream.set_default_payload_type(
+                sctp::chunk::chunk_payload_data::PayloadProtocolIdentifier::Binary,
+            );
+            let dc = match DataChannel::server(
+                stream,
+                data::data_channel::Config {
+                    max_message_size: param.sctp_association.max_message_size(),
+                    ..data::data_channel::Config::default()
+                },
+            )
+            .await
+            {
+                Ok(dc) => dc,
+                Err(err) => {
+                    // KPS PATCH: a malformed/early stream must not kill
+                    // acceptance of every future channel.
+                    log::error!("Failed to accept data channel: {err}");
+                    if let Some(handler) = &*param.on_error_handler.load() {
+                        let mut f = handler.lock().await;
+                        f(err.into()).await;
+                    }
+                    continue;
                 }
             };
 
