@@ -967,6 +967,23 @@ impl AssociationInternal {
                             self.payload_queue.push(d.clone(), self.peer_last_tsn);
                             stream_handle_data = true; //s.handle_data(d.clone());
                         }
+                    } else if d.tsn == self.peer_last_tsn.wrapping_add(1) {
+                        // KPS PATCH: the payload queue is empty (everything
+                        // received so far is cumulatively acked), so the
+                        // buffer is "full" purely from incomplete fragment
+                        // sets pinned in the reassembly queues — and the only
+                        // chunk that can ever complete them and let the
+                        // application drain is exactly this retransmission of
+                        // peer_last_tsn+1. Dropping it (the previous
+                        // behaviour) deadlocked the association in a
+                        // permanent zero-window: the sender retransmits the
+                        // same chunk forever and every copy is dropped.
+                        // Accepting the single in-sequence chunk restores
+                        // liveness and admits at most one chunk per
+                        // cumulative-ack advance.
+                        log::debug!("[{}] receive buffer full, but accepted as the in-sequence chunk (tsn={} ssn={}) that unblocks reassembly", self.name, d.tsn, d.stream_sequence_number);
+                        self.payload_queue.push(d.clone(), self.peer_last_tsn);
+                        stream_handle_data = true;
                     } else {
                         log::debug!(
                             "[{}] receive buffer full. dropping DATA with tsn={} ssn={}",
