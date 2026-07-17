@@ -17,6 +17,7 @@ struct Flags {
     timeout: Duration,
     close_code: u32,
     datagram: bool,
+    repeat: usize,
 }
 
 fn parse_flags() -> Flags {
@@ -27,6 +28,7 @@ fn parse_flags() -> Flags {
         timeout: Duration::from_secs(15),
         close_code: 0,
         datagram: false,
+        repeat: 1,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -56,6 +58,7 @@ fn parse_flags() -> Flags {
                 flags.timeout = Duration::from_secs_f64(secs);
             }
             "closecode" => flags.close_code = take(&mut i).parse().unwrap_or(0),
+            "repeat" => flags.repeat = take(&mut i).parse().unwrap_or(1),
             "datagram" => {
                 if let Some(v) = &inline {
                     flags.datagram = v == "true";
@@ -145,9 +148,19 @@ async fn main() {
         }
     };
 
-    if let Err(e) = stream.write_all(flags.message.as_bytes()).await {
-        eprintln!("write: {e}");
-        std::process::exit(1);
+    let payload = flags.message.repeat(flags.repeat);
+    // A credit-blocked write must exit non-zero (so callers can retry) rather
+    // than hang the process on a wire stall.
+    match timeout(flags.timeout, stream.write_all(payload.as_bytes())).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            eprintln!("write: {e}");
+            std::process::exit(1);
+        }
+        Err(_) => {
+            eprintln!("write: timed out");
+            std::process::exit(1);
+        }
     }
     // Finish our write half so the echo server sees EOF, mirrors the bytes
     // back, and closes its own write half.
@@ -170,10 +183,15 @@ async fn main() {
     }
     let _ = stream.close().await;
 
-    print!("{}", String::from_utf8_lossy(&echoed));
-    if echoed != flags.message.as_bytes() {
-        eprintln!("\ndial: echo mismatch");
+    if echoed != payload.as_bytes() {
+        eprintln!("dial: echo mismatch: sent {} bytes, got {} bytes", payload.len(), echoed.len());
         std::process::exit(1);
+    }
+    // Large payloads print a summary instead of megabytes of echo.
+    if flags.repeat > 1 {
+        print!("echoed {} bytes OK", echoed.len());
+    } else {
+        print!("{}", String::from_utf8_lossy(&echoed));
     }
     finish(&*conn, flags.close_code).await;
 }

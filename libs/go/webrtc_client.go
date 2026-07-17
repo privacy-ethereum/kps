@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"strings"
-	"sync"
 
 	"github.com/pion/webrtc/v4"
 )
@@ -76,24 +75,20 @@ func DialWebRTC(ctx context.Context, addr string) (Conn, error) {
 	}
 
 	conn := newConn(pc, control, &net.UDPAddr{IP: net.ParseIP(a.IP), Port: a.Port})
-	connected := make(chan struct{})
-	var once sync.Once
 	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
 		switch s {
-		case webrtc.PeerConnectionStateConnected:
-			once.Do(func() { close(connected) })
 		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed:
 			conn.markClosed(nil)
 		}
 	})
 
-	select {
-	case <-connected:
-		return conn, nil
-	case <-ctx.Done():
+	// Established = transport up AND mutual HELLO (SPEC §8): dial MUST NOT
+	// complete before the HELLO exchange.
+	if err := conn.waitEstablished(ctx); err != nil {
 		_ = pc.Close()
-		return nil, ctx.Err()
+		return nil, err
 	}
+	return conn, nil
 }
 
 // randUfrag returns a random ICE ufrag (64 bits, SPEC §5.2), hex-encoded. Hex

@@ -4,8 +4,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { parseAddress, formatAddress, decodeCerthash, encodeCerthash } from '../dist/index.js'
 import {
-  deriveICEPwd, decodeFrame, encodeData, encodeFin, encodeCode,
-  FRAME_DATA, FRAME_FIN, FRAME_RESET, numToCode,
+  deriveICEPwd, parseFrame, encodeData, encodeFin, encodeCode,
+  FRAME_RESET, numToCode,
 } from '../dist/webrtc.js'
 
 test('parseAddress/formatAddress round-trip (v4 + bracketed v6)', () => {
@@ -44,15 +44,15 @@ test('deriveICEPwd known vector (must match the Go server)', async () => {
   assert.equal(pwd, 'dn9pWWCBP6fiDbQLjNcQVFAYWVSdPNzYf5JQ8JzVSso')
 })
 
-test('decodeFrame: DATA / FIN / RESET(code)', () => {
-  const data = decodeFrame(encodeData(new Uint8Array([1, 2, 3])))
-  assert.equal(data.type, FRAME_DATA)
-  assert.deepEqual(data.payload, new Uint8Array([1, 2, 3]))
+test('parseFrame: DATA / FIN / RESET(code)', () => {
+  const data = parseFrame(encodeData(new Uint8Array([1, 2, 3])))
+  assert.equal(data.type, 'data')
+  assert.deepEqual(new Uint8Array(data.payload), new Uint8Array([1, 2, 3]))
 
-  assert.equal(decodeFrame(encodeFin()).type, FRAME_FIN)
+  assert.equal(parseFrame(encodeFin()).type, 'fin')
 
-  const reset = decodeFrame(encodeCode(FRAME_RESET, 3))
-  assert.equal(reset.type, FRAME_RESET)
+  const reset = parseFrame(encodeCode(FRAME_RESET, 3))
+  assert.equal(reset.type, 'reset')
   assert.equal(reset.code, 3)
   assert.equal(numToCode(3), 'reset')
 })

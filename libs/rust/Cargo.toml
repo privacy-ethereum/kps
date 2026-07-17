@@ -4,7 +4,7 @@ resolver = "2"
 members = ["kps", "kps-server", "kps-dial"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/privacy-ethereum/kps"
@@ -21,5 +21,12 @@ anyhow = "1"
 # repo — verbatim crates.io 0.13.0 plus one commit (grep "KPS PATCH") — pinned
 # by rev so builds don't float with the branch.
 # Upstream: https://github.com/webrtc-rs/webrtc/issues/816
+# Vendored dependency patches, each an orphan branch of this repo holding a
+# verbatim crates.io copy plus one fix commit (grep "KPS PATCH"):
+# - webrtc-sctp: read-shutdown drain (webrtc-rs/webrtc#816) + permanent
+#   zero-window deadlock on tail-of-burst loss.
+# - webrtc: negotiated-channel accept race (early inbound message on a
+#   negotiated stream parsed as DCEP, killing the accept loop).
 [patch.crates-io]
-webrtc-sctp = { git = "https://github.com/privacy-ethereum/kps.git", rev = "2d730447917bbf775cda0ad967ea3e737de46ef7" }
+webrtc-sctp = { git = "https://github.com/privacy-ethereum/kps.git", rev = "a73a0a8f9e4f76f3b89ba1155562ec836bcf3f3b" }
+webrtc = { git = "https://github.com/privacy-ethereum/kps.git", rev = "1b5884131892c8f78d2bbf5c829bf75e8c850438" }

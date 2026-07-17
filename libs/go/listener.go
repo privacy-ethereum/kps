@@ -343,10 +343,19 @@ func (l *Listener) spawnPC(ufrag string, srcAddr netip.AddrPort) *pcEntry {
 		switch s {
 		case webrtc.PeerConnectionStateConnected:
 			acceptOnce.Do(func() {
-				select {
-				case l.acceptCh <- kc:
-				case <-l.closed:
-				}
+				// Surface the connection only after mutual HELLO (SPEC §8:
+				// accept MUST NOT complete before it). waitEstablished is
+				// bounded by helloTimeout, and a rejected/failed handshake
+				// tears the conn down without ever surfacing it.
+				go func() {
+					if err := kc.waitEstablished(context.Background()); err != nil {
+						return
+					}
+					select {
+					case l.acceptCh <- kc:
+					case <-l.closed:
+					}
+				}()
 			})
 		case webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateFailed:
 			kc.markClosed(nil)

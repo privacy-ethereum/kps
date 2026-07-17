@@ -1,6 +1,15 @@
-//! The WebRTC implementation of [`Stream`] (SPEC §6.2): a byte stream over one
-//! SCTP data channel, framed with DATA/FIN/RESET/STOP_SENDING. The
-//! data-channel label is a non-semantic implementation detail.
+//! The WebRTC implementation of [`Stream`] (SPEC §6.2 framing + §6.5 flow
+//! control): a byte stream over one SCTP data channel. The data-channel label
+//! is a non-semantic implementation detail.
+//!
+//! Outbound frames travel two queues into one writer task: the bounded,
+//! ordered DATA queue (DATA and FIN — FIN must follow the DATA the write API
+//! already accepted) and the unbounded lifecycle queue (RESET / STOP_SENDING /
+//! MAX_STREAM_DATA — no ordering constraint against unsent DATA, and per §6.5
+//! never blocked behind a full DATA queue). Every DATA frame reserves §6.5
+//! credit BEFORE entering the queue; the writer task commits the reservation
+//! when the frame reaches the transport, or releases it when a reset discards
+//! queued-but-unsent DATA.
 
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -19,12 +28,14 @@ use webrtc::data_channel::RTCDataChannel;
 
 use crate::api::Stream;
 use crate::error::{Error, ErrorCode, Result, StreamError};
+use crate::flow::ConnFlow;
 use crate::framing::{
-    decode_code, encode_code, encode_data, encode_fin, FrameType, MAX_FRAME_PAYLOAD,
+    encode_code, encode_data, encode_fin, encode_max_stream_data, parse_frame, FrameType,
+    ParsedFrame, MAX_FRAME_PAYLOAD,
 };
 
-/// The SCTP send-buffer level at which a blocked write resumes; writes apply
-/// backpressure above it (same value as the Go implementation).
+/// The SCTP send-buffer level at which the writer task pauses. This is a LOCAL
+/// queue bound only — flow control is the §6.5 credit reservation.
 const WRITE_BUFFER_LOW: usize = 1 << 20; // 1 MiB
 
 /// Frame-level tracing to stderr, enabled by setting KPS_DEBUG. For debugging
@@ -34,24 +45,52 @@ fn kps_debug() -> bool {
     *ON.get_or_init(|| std::env::var_os("KPS_DEBUG").is_some())
 }
 
+/// Hooks into the owning connection.
+#[derive(Clone)]
+pub(crate) struct StreamHooks {
+    /// A wire violation by the peer: the whole connection must fail.
+    pub(crate) fatal: Arc<dyn Fn(ErrorCode, String) + Send + Sync>,
+    /// Fired once when the stream fully retires (wire-complete + channel
+    /// closed + drained).
+    pub(crate) retired: Arc<dyn Fn() + Send + Sync>,
+    /// True while the connection is closing/failed (suppresses close policing).
+    pub(crate) is_teardown: Arc<dyn Fn() -> bool + Send + Sync>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Terminal {
+    Fin,
+    Reset,
+}
+
 /// State shared between the data-channel callbacks and the poll fns.
 pub(crate) struct Shared {
     state: Mutex<State>,
     open_notify: Notify,
     closed_notify: Notify,
     buf_low: Notify,
+    flow: Arc<ConnFlow>,
+    id: u64,
+    hooks: StreamHooks,
+    dc: Arc<RTCDataChannel>,
+    /// Lifecycle/credit frames: unbounded so a full DATA queue never blocks
+    /// them (§6.5).
+    life_tx: mpsc::UnboundedSender<Vec<u8>>,
 }
 
 #[derive(Default)]
 struct State {
     inbuf: VecDeque<Bytes>,
-    read_eof: bool,                  // peer FIN observed
-    read_err: Option<StreamError>,   // peer RESET observed
-    read_cancel: bool,               // local cancel_read
-    write_closed: bool,              // local close_write/reset_write/close
+    peer_fin: bool,                  // peer FIN observed
+    peer_reset: Option<StreamError>, // peer RESET observed
     peer_stop: Option<StreamError>,  // peer STOP_SENDING observed
+    local_terminal: Option<Terminal>,
+    local_terminal_sent: bool, // FIN/RESET actually handed to the transport
+    read_cancel: bool,         // local cancel_read
+    drop_data: bool,   // writer task discards queued-but-unsent DATA
     dc_open: bool,
     dc_closed: bool,
+    retired_fired: bool,
     closed: bool,
     read_waker: Option<Waker>,
 }
@@ -65,46 +104,185 @@ impl Shared {
 
     /// Handles one inbound data-channel message (exactly one frame, SPEC §6.2).
     fn on_frame(&self, data: &[u8]) {
-        let Some(&first) = data.first() else { return };
-        let Some(t) = FrameType::from_byte(first) else { return };
-        let payload = &data[1..];
+        let f = match parse_frame(data) {
+            Ok(f) => f,
+            Err(msg) => {
+                (self.hooks.fatal)(ErrorCode::ProtocolError, msg);
+                return;
+            }
+        };
         if kps_debug() {
-            eprintln!("[kps-stream] frame in: {t:?} len={}", payload.len());
+            eprintln!("[kps-stream] frame in: {f:?}");
         }
-        let mut st = self.state.lock().unwrap();
-        match t {
-            FrameType::Data => {
-                if st.read_cancel || st.read_eof || st.read_err.is_some() {
-                    return; // dropping inbound after cancel/EOF/reset
+        match f {
+            ParsedFrame::Data(payload) => {
+                let n = payload.len() as u64;
+                {
+                    let st = self.state.lock().unwrap();
+                    if st.peer_fin || st.peer_reset.is_some() {
+                        drop(st);
+                        (self.hooks.fatal)(ErrorCode::ProtocolError, "DATA after terminal frame".into());
+                        return;
+                    }
                 }
-                if !payload.is_empty() {
-                    st.inbuf.push_back(Bytes::copy_from_slice(payload));
+                if let Err(msg) = self.flow.on_data_received(self.id, n) {
+                    (self.hooks.fatal)(ErrorCode::ProtocolError, msg);
+                    return;
                 }
-                Self::wake_reader(&mut st);
+                let cancelled = {
+                    let mut st = self.state.lock().unwrap();
+                    if st.read_cancel {
+                        true
+                    } else {
+                        st.inbuf.push_back(Bytes::copy_from_slice(payload));
+                        Self::wake_reader(&mut st);
+                        false
+                    }
+                };
+                if cancelled {
+                    // In-flight DATA racing our STOP_SENDING: discard = consumed.
+                    self.consumed(n);
+                }
             }
-            FrameType::Fin => {
-                st.read_eof = true;
-                Self::wake_reader(&mut st);
-            }
-            FrameType::Reset => {
-                if st.read_err.is_none() {
-                    st.read_err = Some(StreamError { code: decode_code(payload), remote: true });
+            ParsedFrame::Fin => {
+                {
+                    let mut st = self.state.lock().unwrap();
+                    if st.peer_fin || st.peer_reset.is_some() {
+                        drop(st);
+                        (self.hooks.fatal)(ErrorCode::ProtocolError, "second terminal frame".into());
+                        return;
+                    }
+                    st.peer_fin = true;
+                    Self::wake_reader(&mut st);
                 }
-                Self::wake_reader(&mut st);
+                self.maybe_retire();
             }
-            FrameType::StopSending => {
-                if st.peer_stop.is_none() {
-                    st.peer_stop = Some(StreamError { code: decode_code(payload), remote: true });
+            ParsedFrame::Reset(code) => {
+                let discarded = {
+                    let mut st = self.state.lock().unwrap();
+                    if st.peer_fin || st.peer_reset.is_some() {
+                        drop(st);
+                        (self.hooks.fatal)(ErrorCode::ProtocolError, "second terminal frame".into());
+                        return;
+                    }
+                    st.peer_reset = Some(StreamError { code, remote: true });
+                    // QUIC-like reset: discard buffered-but-unread bytes
+                    // (counts as consumed, releasing connection credit).
+                    let n: u64 = st.inbuf.iter().map(|b| b.len() as u64).sum();
+                    st.inbuf.clear();
+                    Self::wake_reader(&mut st);
+                    n
+                };
+                if discarded > 0 {
+                    self.consumed(discarded);
                 }
-                st.write_closed = true;
+                self.maybe_retire();
+            }
+            ParsedFrame::StopSending(code) => {
+                let auto_reset = {
+                    let mut st = self.state.lock().unwrap();
+                    if st.peer_stop.is_some() {
+                        return; // duplicate: ignore
+                    }
+                    st.peer_stop = Some(StreamError { code, remote: true });
+                    if st.local_terminal.is_none() {
+                        // No terminal handed to the transport yet: reply with
+                        // RESET and discard queued-but-unsent DATA (§6.2).
+                        st.local_terminal = Some(Terminal::Reset);
+                        st.drop_data = true;
+                        true
+                    } else {
+                        false
+                    }
+                };
+                self.flow.fail_send(self.id);
+                self.buf_low.notify_waiters(); // unblock the writer task promptly
+                if auto_reset {
+                    let _ = self.life_tx.send(encode_code(FrameType::Reset, code));
+                    self.maybe_retire();
+                }
+            }
+            ParsedFrame::MaxStreamData(v) => {
+                self.flow.on_peer_max_stream_data(self.id, v);
             }
         }
+    }
+
+    /// Consumption accounting: forwards to the flow engine and sends any due
+    /// stream-level credit advertisement on this stream's channel.
+    fn consumed(&self, n: u64) {
+        if let Some(adv) = self.flow.on_consumed(self.id, n) {
+            let _ = self.life_tx.send(encode_max_stream_data(adv));
+        }
+    }
+
+    /// Drives the §6.5 retirement ladder: once wire-complete and locally
+    /// drained we MUST initiate the channel close; once the channel has also
+    /// closed, the stream retires (hooks.retired returns MAX_STREAMS credit
+    /// for peer-initiated streams and drops flow state).
+    fn maybe_retire(&self) {
+        let (wire_complete, drained, dc_closed, fire) = {
+            let mut st = self.state.lock().unwrap();
+            // Wire-complete needs the local terminal frame ON THE WIRE (handed
+            // to the transport by the writer task), not merely queued.
+            let wire_complete =
+                st.local_terminal_sent && (st.peer_fin || st.peer_reset.is_some());
+            let drained = st.inbuf.is_empty();
+            let dc_closed = st.dc_closed;
+            let mut fire = false;
+            if wire_complete && drained && dc_closed && !st.retired_fired {
+                st.retired_fired = true;
+                fire = true;
+            }
+            (wire_complete, drained, dc_closed, fire)
+        };
+        if !wire_complete || !drained {
+            return;
+        }
+        if !dc_closed {
+            // Let the terminal frame flush out of the SCTP send buffer before
+            // resetting the stream (bounded so close stays prompt).
+            let dc = self.dc.clone();
+            tokio::spawn(async move {
+                let deadline = tokio::time::Instant::now() + Duration::from_millis(250);
+                while dc.buffered_amount().await > 0 && tokio::time::Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+                let _ = dc.close().await;
+            });
+            return;
+        }
+        if fire {
+            self.flow.drop_stream(self.id);
+            (self.hooks.retired)();
+        }
+    }
+
+    fn on_channel_close(&self) {
+        let wire_complete = {
+            let mut st = self.state.lock().unwrap();
+            st.dc_closed = true;
+            Self::wake_reader(&mut st);
+            st.local_terminal_sent && (st.peer_fin || st.peer_reset.is_some())
+        };
+        if !wire_complete && !(self.hooks.is_teardown)() {
+            // §6.5 teardown accounting: a channel disappearing mid-stream
+            // leaves connection credit ambiguous — connection-fatal.
+            (self.hooks.fatal)(ErrorCode::ProtocolError, "data channel closed mid-stream".into());
+        }
+        self.flow.fail_send(self.id);
+        self.open_notify.notify_waiters();
+        self.buf_low.notify_waiters();
+        self.mark_closed();
+        self.maybe_retire();
     }
 
     /// Resolves when the data channel is open (Ok) or dead (Err).
     async fn wait_open(&self) -> Result<()> {
         loop {
             let notified = self.open_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable(); // register BEFORE the check (lost-wakeup)
             {
                 let st = self.state.lock().unwrap();
                 if st.dc_open {
@@ -128,23 +306,32 @@ impl Shared {
 }
 
 pub(crate) struct WebrtcStream {
-    dc: Arc<RTCDataChannel>,
     shared: Arc<Shared>,
-    /// Frames queued in-order to the writer task (DATA/FIN/RESET/STOP_SENDING
-    /// all travel this path, so lifecycle frames stay ordered behind data).
-    frame_poll_tx: PollSender<Vec<u8>>,
-    frame_tx: mpsc::Sender<Vec<u8>>,
+    /// Ordered DATA+FIN queue to the writer task; each entry carries its
+    /// reserved credit (0 for FIN).
+    data_poll_tx: PollSender<(Vec<u8>, u64)>,
+    data_tx: mpsc::Sender<(Vec<u8>, u64)>,
+    /// Credit granted by poll_reserve but not yet queued (held across Pending
+    /// from the queue reservation).
+    pending_grant: u64,
 }
 
 impl WebrtcStream {
-    /// Wraps a data channel as a KPS stream. Registers all callbacks and spawns
-    /// the writer task; safe to call before the channel opens.
-    pub(crate) fn new(dc: Arc<RTCDataChannel>) -> Self {
+    /// Wraps a data channel as a KPS stream. Registers all callbacks and
+    /// spawns the writer task; safe to call before the channel opens.
+    pub(crate) fn new(dc: Arc<RTCDataChannel>, flow: Arc<ConnFlow>, hooks: StreamHooks) -> Self {
+        let id = flow.new_stream();
+        let (life_tx, life_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         let shared = Arc::new(Shared {
             state: Mutex::new(State::default()),
             open_notify: Notify::new(),
             closed_notify: Notify::new(),
             buf_low: Notify::new(),
+            flow,
+            id,
+            hooks,
+            dc: dc.clone(),
+            life_tx,
         });
 
         if dc.ready_state() == RTCDataChannelState::Open {
@@ -178,25 +365,20 @@ impl WebrtcStream {
                     if kps_debug() {
                         eprintln!("[kps-stream] dc closed");
                     }
-                    {
-                        let mut st = shared.state.lock().unwrap();
-                        st.dc_closed = true;
-                        if !st.read_eof && st.read_err.is_none() {
-                            st.read_eof = true; // unexpected close reads as EOF
-                        }
-                        Shared::wake_reader(&mut st);
-                    }
-                    shared.open_notify.notify_waiters();
-                    shared.buf_low.notify_waiters();
-                    shared.mark_closed();
+                    shared.on_channel_close();
                 })
             }));
         }
 
-        let (frame_tx, frame_rx) = mpsc::channel::<Vec<u8>>(32);
-        tokio::spawn(writer_task(dc.clone(), frame_rx, shared.clone()));
+        let (data_tx, data_rx) = mpsc::channel::<(Vec<u8>, u64)>(32);
+        tokio::spawn(writer_task(dc, data_rx, life_rx, shared.clone()));
 
-        Self { dc, shared, frame_poll_tx: PollSender::new(frame_tx.clone()), frame_tx }
+        Self {
+            shared,
+            data_poll_tx: PollSender::new(data_tx.clone()),
+            data_tx,
+            pending_grant: 0,
+        }
     }
 
     /// Resolves when the data channel is open (used by open_stream).
@@ -205,10 +387,17 @@ impl WebrtcStream {
     }
 }
 
-/// Sends queued frames in order, applying SCTP backpressure: while the send
-/// buffer is above the threshold, wait for on_buffered_amount_low (with a
-/// timeout guard against missed notifications).
-async fn writer_task(dc: Arc<RTCDataChannel>, mut rx: mpsc::Receiver<Vec<u8>>, shared: Arc<Shared>) {
+/// Sends queued frames, applying the LOCAL send-buffer bound (credit was
+/// already reserved before frames entered the queue). Lifecycle frames take
+/// priority — they are small, credit-exempt, and per §6.5 must never be
+/// blocked behind DATA. When `drop_data` is set (reset / STOP_SENDING),
+/// queued-but-unsent DATA is discarded and its reservation released.
+async fn writer_task(
+    dc: Arc<RTCDataChannel>,
+    mut data_rx: mpsc::Receiver<(Vec<u8>, u64)>,
+    mut life_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    shared: Arc<Shared>,
+) {
     dc.set_buffered_amount_low_threshold(WRITE_BUFFER_LOW).await;
     {
         let shared = shared.clone();
@@ -224,29 +413,78 @@ async fn writer_task(dc: Arc<RTCDataChannel>, mut rx: mpsc::Receiver<Vec<u8>>, s
     if shared.wait_open().await.is_err() {
         return;
     }
-    while let Some(frame) = rx.recv().await {
-        loop {
-            let notified = shared.buf_low.notified();
-            if shared.state.lock().unwrap().dc_closed {
-                return;
+    let send = |frame: Vec<u8>| {
+        let dc = dc.clone();
+        async move {
+            let kind = frame.first().copied();
+            match dc.send(&Bytes::from(frame)).await {
+                Ok(n) => {
+                    if kps_debug() {
+                        eprintln!("[kps-stream] frame out: type={kind:?} sent={n}");
+                    }
+                    true
+                }
+                Err(e) => {
+                    if kps_debug() {
+                        eprintln!("[kps-stream] frame out FAILED: type={kind:?} err={e}");
+                    }
+                    false
+                }
             }
-            if dc.buffered_amount().await <= WRITE_BUFFER_LOW {
-                break;
-            }
-            let _ = tokio::time::timeout(Duration::from_millis(100), notified).await;
         }
-        let kind = frame.first().copied();
-        match dc.send(&Bytes::from(frame)).await {
-            Ok(n) => {
-                if kps_debug() {
-                    eprintln!("[kps-stream] frame out: type={kind:?} sent={n}");
+    };
+    // A successfully-sent FIN/RESET makes the local write half terminal ON THE
+    // WIRE — the condition §6.5 retirement needs.
+    let mark_terminal_sent = |kind: Option<u8>| {
+        if kind == Some(FrameType::Fin as u8) || kind == Some(FrameType::Reset as u8) {
+            shared.state.lock().unwrap().local_terminal_sent = true;
+            shared.maybe_retire();
+        }
+    };
+    loop {
+        tokio::select! {
+            biased;
+            life = life_rx.recv() => {
+                let Some(frame) = life else { break };
+                let kind = frame.first().copied();
+                if !send(frame).await {
+                    break;
                 }
+                mark_terminal_sent(kind);
             }
-            Err(e) => {
-                if kps_debug() {
-                    eprintln!("[kps-stream] frame out FAILED: type={kind:?} err={e}");
+            data = data_rx.recv() => {
+                let Some((frame, reserved)) = data else { break };
+                let kind = frame.first().copied();
+                let dropping = shared.state.lock().unwrap().drop_data;
+                if dropping && kind == Some(FrameType::Data as u8) {
+                    if reserved > 0 {
+                        shared.flow.release(shared.id, reserved);
+                    }
+                    continue;
                 }
-                return;
+                // Local send-buffer bound (not flow control).
+                loop {
+                    let notified = shared.buf_low.notified();
+                    if shared.state.lock().unwrap().dc_closed {
+                        if reserved > 0 { shared.flow.release(shared.id, reserved); }
+                        return;
+                    }
+                    if dc.buffered_amount().await <= WRITE_BUFFER_LOW {
+                        break;
+                    }
+                    let _ = tokio::time::timeout(Duration::from_millis(100), notified).await;
+                }
+                if send(frame).await {
+                    if reserved > 0 {
+                        shared.flow.commit(shared.id, reserved);
+                    }
+                    mark_terminal_sent(kind);
+                } else {
+                    if reserved > 0 {
+                        shared.flow.release(shared.id, reserved);
+                    }
+                    break;
+                }
             }
         }
     }
@@ -258,28 +496,40 @@ impl AsyncRead for WebrtcStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        let mut st = self.shared.state.lock().unwrap();
-        if let Some(chunk) = st.inbuf.front_mut() {
-            let n = chunk.len().min(buf.remaining());
-            buf.put_slice(&chunk[..n]);
-            if n == chunk.len() {
-                st.inbuf.pop_front();
+        let consumed;
+        {
+            let mut st = self.shared.state.lock().unwrap();
+            if let Some(chunk) = st.inbuf.front_mut() {
+                let n = chunk.len().min(buf.remaining());
+                buf.put_slice(&chunk[..n]);
+                if n == chunk.len() {
+                    st.inbuf.pop_front();
+                } else {
+                    let _ = chunk.split_to(n);
+                }
+                consumed = n as u64;
             } else {
-                let _ = chunk.split_to(n);
+                if st.read_cancel {
+                    return Poll::Ready(Err(std::io::Error::other(Error::StreamClosed)));
+                }
+                if let Some(err) = st.peer_reset {
+                    return Poll::Ready(Err(std::io::Error::other(err)));
+                }
+                if st.peer_fin {
+                    return Poll::Ready(Ok(())); // EOF: no bytes written
+                }
+                if st.dc_closed {
+                    return Poll::Ready(Err(std::io::Error::other(Error::StreamClosed)));
+                }
+                st.read_waker = Some(cx.waker().clone());
+                return Poll::Pending;
             }
-            return Poll::Ready(Ok(()));
         }
-        if st.read_cancel {
-            return Poll::Ready(Err(std::io::Error::other(Error::StreamClosed)));
-        }
-        if let Some(err) = st.read_err {
-            return Poll::Ready(Err(std::io::Error::other(err)));
-        }
-        if st.read_eof {
-            return Poll::Ready(Ok(())); // EOF: no bytes written
-        }
-        st.read_waker = Some(cx.waker().clone());
-        Poll::Pending
+        // Bytes handed to the application: consumption (§6.5) — advances the
+        // receive counters and eventually re-advertises credit.
+        self.shared.consumed(consumed);
+        self.shared.maybe_retire();
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -294,21 +544,42 @@ impl AsyncWrite for WebrtcStream {
             if let Some(err) = st.peer_stop {
                 return Poll::Ready(Err(std::io::Error::other(err)));
             }
-            if st.write_closed {
+            if st.local_terminal.is_some() {
                 return Poll::Ready(Err(std::io::Error::other(Error::WriteClosed)));
             }
             if st.dc_closed {
                 return Poll::Ready(Err(std::io::Error::other(Error::StreamClosed)));
             }
         }
-        match self.frame_poll_tx.poll_reserve(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Err(_)) => Poll::Ready(Err(std::io::Error::other(Error::StreamClosed))),
+        // Credit BEFORE the frame may enter the queue (§6.5). The grant may be
+        // partial — frames split at the credit boundary as well as at
+        // MAX_FRAME_PAYLOAD. A grant is held across a Pending queue
+        // reservation (and released on failure or drop).
+        if self.pending_grant == 0 {
+            let want = buf.len().min(MAX_FRAME_PAYLOAD) as u64;
+            match self.shared.flow.poll_reserve(cx, self.shared.id, want) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(std::io::Error::other(e))),
+                Poll::Ready(Ok(granted)) => self.pending_grant = granted,
+            }
+        }
+        let granted = self.pending_grant;
+        match self.data_poll_tx.poll_reserve(cx) {
+            Poll::Pending => Poll::Pending, // grant stays held for the next poll
+            Poll::Ready(Err(_)) => {
+                self.shared.flow.release(self.shared.id, granted);
+                self.pending_grant = 0;
+                Poll::Ready(Err(std::io::Error::other(Error::StreamClosed)))
+            }
             Poll::Ready(Ok(())) => {
-                let n = buf.len().min(MAX_FRAME_PAYLOAD);
-                if self.frame_poll_tx.send_item(encode_data(&buf[..n])).is_err() {
+                let n = granted as usize;
+                let item = (encode_data(&buf[..n]), granted);
+                if self.data_poll_tx.send_item(item).is_err() {
+                    self.shared.flow.release(self.shared.id, granted);
+                    self.pending_grant = 0;
                     return Poll::Ready(Err(std::io::Error::other(Error::StreamClosed)));
                 }
+                self.pending_grant = 0;
                 Poll::Ready(Ok(n))
             }
         }
@@ -324,20 +595,22 @@ impl AsyncWrite for WebrtcStream {
         // AsyncWrite::shutdown maps to a graceful FIN (close_write).
         {
             let mut st = self.shared.state.lock().unwrap();
-            if st.write_closed {
+            if st.local_terminal.is_some() {
                 return Poll::Ready(Ok(()));
             }
-            st.write_closed = true;
+            st.local_terminal = Some(Terminal::Fin);
         }
-        match self.frame_poll_tx.poll_reserve(cx) {
+        match self.data_poll_tx.poll_reserve(cx) {
             Poll::Pending => {
                 // Undo so a re-poll retries the reservation.
-                self.shared.state.lock().unwrap().write_closed = false;
+                self.shared.state.lock().unwrap().local_terminal = None;
                 Poll::Pending
             }
             Poll::Ready(Err(_)) => Poll::Ready(Err(std::io::Error::other(Error::StreamClosed))),
             Poll::Ready(Ok(())) => {
-                let _ = self.frame_poll_tx.send_item(encode_fin());
+                let _ = self.data_poll_tx.send_item((encode_fin(), 0));
+                self.shared.flow.fail_send(self.shared.id);
+                self.shared.maybe_retire();
                 Poll::Ready(Ok(()))
             }
         }
@@ -349,65 +622,78 @@ impl Stream for WebrtcStream {
     async fn close_write(&mut self) -> Result<()> {
         {
             let mut st = self.shared.state.lock().unwrap();
-            if st.write_closed {
+            if st.local_terminal.is_some() {
                 return Ok(());
             }
-            st.write_closed = true;
+            st.local_terminal = Some(Terminal::Fin);
         }
-        self.frame_tx.send(encode_fin()).await.map_err(|_| Error::StreamClosed)?;
+        self.shared.flow.fail_send(self.shared.id);
+        // FIN rides the ordered DATA queue so it follows every accepted write.
+        self.data_tx.send((encode_fin(), 0)).await.map_err(|_| Error::StreamClosed)?;
+        self.shared.maybe_retire();
         Ok(())
     }
 
     async fn cancel_read(&mut self, code: ErrorCode) -> Result<()> {
-        {
+        let (discarded, peer_terminal) = {
             let mut st = self.shared.state.lock().unwrap();
             if st.read_cancel {
                 return Ok(());
             }
             st.read_cancel = true;
+            let n: u64 = st.inbuf.iter().map(|b| b.len() as u64).sum();
             st.inbuf.clear();
             Shared::wake_reader(&mut st);
+            (n, st.peer_fin || st.peer_reset.is_some())
+        };
+        self.shared.flow.mark_cancelled(self.shared.id);
+        if discarded > 0 {
+            self.shared.consumed(discarded); // discard is consumption (§6.5)
         }
-        self.frame_tx
-            .send(encode_code(FrameType::StopSending, code))
-            .await
-            .map_err(|_| Error::StreamClosed)?;
+        if !peer_terminal {
+            let _ = self.shared.life_tx.send(encode_code(FrameType::StopSending, code));
+        }
+        self.shared.maybe_retire();
         Ok(())
     }
 
     async fn reset_write(&mut self, code: ErrorCode) -> Result<()> {
         {
             let mut st = self.shared.state.lock().unwrap();
-            if st.write_closed {
+            if st.local_terminal.is_some() {
                 return Ok(());
             }
-            st.write_closed = true;
+            st.local_terminal = Some(Terminal::Reset);
+            st.drop_data = true; // discard queued-but-unsent DATA (§6.2)
         }
-        self.frame_tx
-            .send(encode_code(FrameType::Reset, code))
-            .await
-            .map_err(|_| Error::StreamClosed)?;
+        self.shared.flow.fail_send(self.shared.id);
+        self.shared.buf_low.notify_waiters();
+        let _ = self.shared.life_tx.send(encode_code(FrameType::Reset, code));
+        self.shared.maybe_retire();
         Ok(())
     }
 
+    /// Tears down both halves. The channel itself closes at retirement — once
+    /// the peer's terminal frame (a conforming peer answers STOP_SENDING with
+    /// RESET) has arrived — because closing it earlier is a §6.5 protocol
+    /// violation.
     async fn close(&mut self) -> Result<()> {
         let _ = self.close_write().await;
         let _ = self.cancel_read(ErrorCode::Closed).await;
-        // Let the queued FIN drain before tearing the channel down.
-        self.drain_then_close().await;
         Ok(())
     }
 
     async fn close_with_error(&mut self, code: ErrorCode) -> Result<()> {
         let _ = self.reset_write(code).await;
         let _ = self.cancel_read(code).await;
-        self.drain_then_close().await;
         Ok(())
     }
 
     async fn closed(&self) {
         loop {
             let notified = self.shared.closed_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable(); // register BEFORE the check (lost-wakeup)
             if self.shared.state.lock().unwrap().closed {
                 return;
             }
@@ -416,24 +702,14 @@ impl Stream for WebrtcStream {
     }
 
     fn err(&self) -> Option<StreamError> {
-        self.shared.state.lock().unwrap().read_err
+        self.shared.state.lock().unwrap().peer_reset
     }
 }
 
-impl WebrtcStream {
-    /// Waits briefly for queued frames (FIN/RESET) to reach SCTP, then closes
-    /// the channel. Bounded so close stays prompt.
-    async fn drain_then_close(&self) {
-        let deadline = tokio::time::Instant::now() + Duration::from_millis(250);
-        while self.frame_tx.capacity() < self.frame_tx.max_capacity()
-            && tokio::time::Instant::now() < deadline
-        {
-            tokio::time::sleep(Duration::from_millis(5)).await;
+impl Drop for WebrtcStream {
+    fn drop(&mut self) {
+        if self.pending_grant > 0 {
+            self.shared.flow.release(self.shared.id, self.pending_grant);
         }
-        while self.dc.buffered_amount().await > 0 && tokio::time::Instant::now() < deadline {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-        self.shared.mark_closed();
-        let _ = self.dc.close().await;
     }
 }

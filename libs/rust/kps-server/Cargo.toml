@@ -10,3 +10,4 @@ repository.workspace = true
 kps = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
+env_logger = "0.11"

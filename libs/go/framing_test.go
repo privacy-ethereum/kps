@@ -15,10 +15,6 @@ func TestEncodeData(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Fatalf("encodeData = %v, want %v", got, want)
 	}
-	// Empty payload is a bare DATA tag.
-	if got := encodeData(nil); !bytes.Equal(got, []byte{0x00}) {
-		t.Fatalf("encodeData(nil) = %v, want [0]", got)
-	}
 }
 
 func TestEncodeFin(t *testing.T) {
@@ -42,13 +38,59 @@ func TestEncodeCode_BigEndian(t *testing.T) {
 	}
 }
 
-func TestDecodeCode(t *testing.T) {
-	if c := decodeCode([]byte{0x00, 0x00, 0x00, 0x0b}); c != CodeInternalError {
-		t.Fatalf("decodeCode = %d, want %d", c, CodeInternalError)
+func TestParseFrame_Strict(t *testing.T) {
+	// RESET round-trips its code.
+	f, err := parseFrame(encodeCode(frameReset, CodeInternalError))
+	if err != nil || f.typ != frameReset || f.code != CodeInternalError {
+		t.Fatalf("parseFrame(RESET) = %+v, %v", f, err)
 	}
-	// Short/absent payload defaults to CodeNone.
-	if c := decodeCode([]byte{0x00, 0x01}); c != CodeNone {
-		t.Fatalf("decodeCode(short) = %d, want 0", c)
+	// Wire-rule violations (SPEC §6.2, wire version 1) are errors, not tolerated.
+	for name, bad := range map[string][]byte{
+		"empty message":         {},
+		"empty DATA":            {0x00},
+		"FIN with payload":      {0x01, 1},
+		"short RESET":           {0x02, 0, 0},
+		"long STOP_SENDING":     {0x03, 0, 0, 0, 0, 0},
+		"short MAX_STREAM_DATA": {0x04, 1, 2, 3},
+		"unknown type":          {0x05, 1},
+	} {
+		if _, err := parseFrame(bad); err == nil {
+			t.Fatalf("parseFrame(%s) should fail", name)
+		}
+	}
+	// MAX_STREAM_DATA round-trips within the MAX_OFFSET ceiling.
+	f, err = parseFrame(encodeMaxStreamData(maxOffset))
+	if err != nil || f.credit != maxOffset {
+		t.Fatalf("parseFrame(MAX_STREAM_DATA) = %+v, %v", f, err)
+	}
+}
+
+func TestControlCodec(t *testing.T) {
+	l := flowLimits{maxStreamData: 1 << 20, maxData: 8 << 20, maxStreams: 100}
+	m, err := decodeControl(encodeHello(l))
+	if err != nil || m.typ != ctrlHello || m.version != wireVersion || m.limits != l {
+		t.Fatalf("decodeControl(HELLO) = %+v, %v", m, err)
+	}
+	if len(encodeHello(l)) != 26 {
+		t.Fatalf("HELLO must be 26 bytes, got %d", len(encodeHello(l)))
+	}
+	m, err = decodeControl(encodeConnClose(CodeReset))
+	if err != nil || m.typ != ctrlConnClose || m.code != CodeReset {
+		t.Fatalf("decodeControl(CLOSE) = %+v, %v", m, err)
+	}
+	m, err = decodeControl(encodeMaxData(42))
+	if err != nil || m.typ != ctrlMaxData || m.value != 42 {
+		t.Fatalf("decodeControl(MAX_DATA) = %+v, %v", m, err)
+	}
+	for name, bad := range map[string][]byte{
+		"empty":        {},
+		"short close":  {0x00, 0, 0, 0},
+		"short hello":  {0x01, 1, 0},
+		"unknown type": {0x07, 0},
+	} {
+		if _, err := decodeControl(bad); err == nil {
+			t.Fatalf("decodeControl(%s) should fail", name)
+		}
 	}
 }
 

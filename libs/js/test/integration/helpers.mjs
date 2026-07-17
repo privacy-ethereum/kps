@@ -192,10 +192,11 @@ export async function spawnGoServer() {
   }
 }
 
-function spawnGoClientOnce({ addr, transport, message, timeoutMs, datagram }) {
+function spawnGoClientOnce({ addr, transport, message, timeoutMs, datagram, repeat }) {
   const bin = buildOnce('dial', './cmd/dial')
   const args = ['-addr', addr, '-transport', transport, '-message', message,
     '-timeout', `${Math.ceil(timeoutMs / 1000)}s`]
+  if (repeat && repeat > 1) args.push('-repeat', String(repeat))
   if (datagram) args.push('-datagram')
   return new Promise((resolve) => {
     const child = spawn(bin, args, { cwd: libsGo, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -214,10 +215,10 @@ function spawnGoClientOnce({ addr, transport, message, timeoutMs, datagram }) {
 // establishment is best-effort and can occasionally miss its window under CI
 // load; a retry re-dials cleanly. An *echo mismatch* is NOT retried — that would
 // be a real correctness bug — so retries stop as soon as the client reports one.
-export async function spawnGoClient({ addr, transport = 'quic', message = 'hello-kps', timeoutMs = 15_000, attempts = 3, datagram = false }) {
+export async function spawnGoClient({ addr, transport = 'quic', message = 'hello-kps', timeoutMs = 15_000, attempts = 3, datagram = false, repeat = 1 }) {
   let last
   for (let i = 0; i < attempts; i++) {
-    last = await spawnGoClientOnce({ addr, transport, message, timeoutMs, datagram })
+    last = await spawnGoClientOnce({ addr, transport, message, timeoutMs, datagram, repeat })
     if (last.code === 0 || /echo mismatch/.test(last.err)) return last
   }
   return last
@@ -274,10 +275,11 @@ export async function spawnRustServer() {
   }
 }
 
-function spawnRustClientOnce({ addr, transport, message, timeoutMs, datagram }) {
+function spawnRustClientOnce({ addr, transport, message, timeoutMs, datagram, repeat }) {
   const bin = rustBin('kps-dial')
   const args = ['-addr', addr, '-transport', transport, '-message', message,
     '-timeout', `${Math.ceil(timeoutMs / 1000)}s`]
+  if (repeat && repeat > 1) args.push('-repeat', String(repeat))
   if (datagram) args.push('-datagram')
   return new Promise((resolve) => {
     const child = spawn(bin, args, { cwd: libsRust, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -290,10 +292,10 @@ function spawnRustClientOnce({ addr, transport, message, timeoutMs, datagram }) 
 }
 
 // Run the Rust dial client, retrying failed connections like spawnGoClient.
-export async function spawnRustClient({ addr, transport = 'quic', message = 'hello-kps', timeoutMs = 15_000, attempts = 3, datagram = false }) {
+export async function spawnRustClient({ addr, transport = 'quic', message = 'hello-kps', timeoutMs = 15_000, attempts = 3, datagram = false, repeat = 1 }) {
   let last
   for (let i = 0; i < attempts; i++) {
-    last = await spawnRustClientOnce({ addr, transport, message, timeoutMs, datagram })
+    last = await spawnRustClientOnce({ addr, transport, message, timeoutMs, datagram, repeat })
     if (last.code === 0 || /echo mismatch/.test(last.err)) return last
   }
   return last

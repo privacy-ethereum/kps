@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
+	"strings"
 	"time"
 
 	kps "github.com/privacy-ethereum/kps/libs/go"
@@ -20,6 +22,7 @@ func main() {
 	addr := flag.String("addr", "", "server address ip:port:certhash")
 	transport := flag.String("transport", "quic", "transport: quic | webrtc")
 	message := flag.String("message", "hello-kps", "message to echo")
+	repeat := flag.Int("repeat", 1, "repeat the message N times (large payloads exercise §6.5 credit)")
 	timeout := flag.Duration("timeout", 15*time.Second, "dial+echo timeout")
 	closeCode := flag.Uint("closecode", 0, "if >0, close the connection with this error code (CloseWithError)")
 	datagram := flag.Bool("datagram", false, "echo via a datagram round-trip instead of a stream")
@@ -49,6 +52,16 @@ func main() {
 		fmt.Fprintf(os.Stderr, "dial: %v\n", err)
 		os.Exit(1)
 	}
+	// Stream Write/Read block without a context; a wire stall must exit
+	// non-zero (so callers can retry) rather than hang the process. Dump all
+	// goroutines first — a stall here is a bug worth diagnosing.
+	watchdog := time.AfterFunc(2*(*timeout), func() {
+		buf := make([]byte, 1<<20)
+		n := runtime.Stack(buf, true)
+		fmt.Fprintf(os.Stderr, "dial: overall deadline exceeded\n%s\n", buf[:n])
+		os.Exit(1)
+	})
+	defer watchdog.Stop()
 	if *closeCode > 0 {
 		defer conn.CloseWithError(kps.ErrorCode(*closeCode))
 	} else {
@@ -89,7 +102,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	if _, err := s.Write([]byte(*message)); err != nil {
+	payload := strings.Repeat(*message, *repeat)
+	if _, err := s.Write([]byte(payload)); err != nil {
 		fmt.Fprintf(os.Stderr, "write: %v\n", err)
 		os.Exit(1)
 	}
@@ -107,9 +121,14 @@ func main() {
 	}
 	_ = s.Close()
 
-	fmt.Print(string(echoed))
-	if string(echoed) != *message {
-		fmt.Fprintf(os.Stderr, "\ndial: echo mismatch: sent %q got %q\n", *message, string(echoed))
+	if string(echoed) != payload {
+		fmt.Fprintf(os.Stderr, "dial: echo mismatch: sent %d bytes, got %d bytes\n", len(payload), len(echoed))
 		os.Exit(1)
+	}
+	// Large payloads print a summary instead of megabytes of echo.
+	if *repeat > 1 {
+		fmt.Printf("echoed %d bytes OK", len(echoed))
+	} else {
+		fmt.Print(string(echoed))
 	}
 }

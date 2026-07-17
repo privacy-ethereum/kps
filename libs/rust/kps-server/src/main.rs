@@ -49,6 +49,7 @@ fn parse_flags() -> Flags {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    env_logger::init();
     let flags = parse_flags();
 
     let listener = kps::listen(

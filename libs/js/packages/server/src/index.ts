@@ -6,7 +6,7 @@
 export { listen } from './listener.js'
 export type { ListenOptions, Listener } from './listener.js'
 export { Connection } from './connection.js'
-export { Stream } from './stream.js'
+export { KpsStream as Stream } from '@kpstreams/core/webrtc'
 export { loadOrCreateIdentity } from './identity.js'
 export type { Identity } from './identity.js'
 

@@ -12,6 +12,9 @@ import {
   echoRoundTrip, goAvailable, rustAvailable,
 } from './helpers.mjs'
 
+// Exactly 24 bytes; × 65536 = 1.5 MiB for the flow-control rows.
+const MSG_24B = 'flow-credit-0123456789ab'
+
 const enc = (s) => new TextEncoder().encode(s)
 const dec = (b) => new TextDecoder().decode(b)
 const skipNoRust = rustAvailable() ? false : 'requires the `cargo` toolchain'
@@ -77,6 +80,18 @@ describe('Rust client → JS server', { skip: skipNoRust }, () => {
     assert.equal(out, 'rust-webrtc-to-js')
   })
 
+  test('WebRTC large payload exercises cross-impl flow control (§6.5)', async () => {
+    // 24 B × 65536 = 1.5 MiB: crosses the 1 MiB stream window, so the echo
+    // only completes if MAX_STREAM_DATA / MAX_DATA credit flows both ways
+    // between the implementations. Stays under the ~2 MiB write-all-then-read
+    // deadlock threshold of the dial CLI.
+    const { code, out, err } = await spawnRustClient({
+      addr: server.address, transport: 'webrtc', message: MSG_24B, repeat: 65536, timeoutMs: 30_000,
+    })
+    assert.equal(code, 0, `rust dial failed: ${err}`)
+    assert.equal(out, `echoed ${MSG_24B.length * 65536} bytes OK`)
+  })
+
   test('WebRTC datagram round-trip', async () => {
     const { code, out, err } = await spawnRustClient({ addr: server.address, transport: 'webrtc', message: 'rust-webrtc-dgram', datagram: true })
     assert.equal(code, 0, `rust datagram dial failed: ${err}`)
@@ -103,6 +118,18 @@ describe('Rust client → Go server', { skip: skipNoBoth }, () => {
     assert.equal(code, 0, `rust dial failed: ${err}`)
     assert.equal(out, 'rust-webrtc-to-go')
   })
+
+  test('WebRTC large payload exercises cross-impl flow control (§6.5)', async () => {
+    // 24 B × 65536 = 1.5 MiB: crosses the 1 MiB stream window, so the echo
+    // only completes if MAX_STREAM_DATA / MAX_DATA credit flows both ways
+    // between the implementations. Stays under the ~2 MiB write-all-then-read
+    // deadlock threshold of the dial CLI.
+    const { code, out, err } = await spawnRustClient({
+      addr: go.address, transport: 'webrtc', message: MSG_24B, repeat: 65536, timeoutMs: 30_000,
+    })
+    assert.equal(code, 0, `rust dial failed: ${err}`)
+    assert.equal(out, `echoed ${MSG_24B.length * 65536} bytes OK`)
+  })
 })
 
 describe('Go client → Rust server', { skip: skipNoBoth }, () => {
@@ -120,6 +147,18 @@ describe('Go client → Rust server', { skip: skipNoBoth }, () => {
     const { code, out, err } = await spawnGoClient({ addr: rust.address, transport: 'webrtc', message: 'go-webrtc-to-rust' })
     assert.equal(code, 0, `go dial failed: ${err}`)
     assert.equal(out, 'go-webrtc-to-rust')
+  })
+
+  test('WebRTC large payload exercises cross-impl flow control (§6.5)', async () => {
+    // 24 B × 65536 = 1.5 MiB: crosses the 1 MiB stream window, so the echo
+    // only completes if MAX_STREAM_DATA / MAX_DATA credit flows both ways
+    // between the implementations. Stays under the ~2 MiB write-all-then-read
+    // deadlock threshold of the dial CLI.
+    const { code, out, err } = await spawnGoClient({
+      addr: rust.address, transport: 'webrtc', message: MSG_24B, repeat: 65536, timeoutMs: 30_000,
+    })
+    assert.equal(code, 0, `go dial failed: ${err}`)
+    assert.equal(out, `echoed ${MSG_24B.length * 65536} bytes OK`)
   })
 
   test('WebRTC datagram round-trip', async () => {

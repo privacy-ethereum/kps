@@ -10,6 +10,9 @@ import {
   startJsServer, spawnGoServer, spawnGoClient, echoRoundTrip, goAvailable,
 } from './helpers.mjs'
 
+// Exactly 24 bytes; × 65536 = 1.5 MiB for the flow-control rows.
+const MSG_24B = 'flow-credit-0123456789ab'
+
 const enc = (s) => new TextEncoder().encode(s)
 const dec = (b) => new TextDecoder().decode(b)
 const skipNoGo = goAvailable() ? false : 'requires the `go` toolchain'
@@ -54,6 +57,18 @@ describe('Go client → JS server', { skip: skipNoGo }, () => {
     const { code, out, err } = await spawnGoClient({ addr: server.address, transport: 'webrtc', message: 'go-webrtc-to-js' })
     assert.equal(code, 0, `go dial failed: ${err}`)
     assert.equal(out, 'go-webrtc-to-js')
+  })
+
+  test('WebRTC large payload exercises cross-impl flow control (§6.5)', async () => {
+    // 24 B × 65536 = 1.5 MiB: crosses the 1 MiB stream window, so the echo
+    // only completes if MAX_STREAM_DATA / MAX_DATA credit flows both ways
+    // between the implementations. Stays under the ~2 MiB write-all-then-read
+    // deadlock threshold of the dial CLI.
+    const { code, out, err } = await spawnGoClient({
+      addr: server.address, transport: 'webrtc', message: MSG_24B, repeat: 65536, timeoutMs: 30_000,
+    })
+    assert.equal(code, 0, `go dial failed: ${err}`)
+    assert.equal(out, `echoed ${MSG_24B.length * 65536} bytes OK`)
   })
 
   // WebRTC datagram symmetry: the QUIC datagram round-trip is covered in

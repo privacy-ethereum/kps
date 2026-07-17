@@ -69,15 +69,8 @@ pub async fn dial_webrtc(addr: &str) -> Result<Box<dyn Conn>> {
     let conn = WebrtcConn::new(pc.clone(), Some(control), remote).await?;
     let close_state = conn.close_state.clone();
 
-    let (connected_tx, connected_rx) = tokio::sync::oneshot::channel::<()>();
-    let connected_tx = std::sync::Mutex::new(Some(connected_tx));
     pc.on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
         match s {
-            RTCPeerConnectionState::Connected => {
-                if let Some(tx) = connected_tx.lock().unwrap().take() {
-                    let _ = tx.send(());
-                }
-            }
             RTCPeerConnectionState::Failed | RTCPeerConnectionState::Closed => {
                 close_state.mark(None);
             }
@@ -101,17 +94,11 @@ pub async fn dial_webrtc(addr: &str) -> Result<Box<dyn Conn>> {
         .await
         .map_err(|e| Error::Dial(format!("set remote: {e}")))?;
 
-    tokio::select! {
-        r = connected_rx => {
-            if r.is_err() {
-                let _ = pc.close().await;
-                return Err(Error::Dial("connection failed".into()));
-            }
-        }
-        _ = conn.closed() => {
-            let _ = pc.close().await;
-            return Err(Error::Dial("connection failed".into()));
-        }
+    // Established = transport up AND mutual HELLO (SPEC §8): dial MUST NOT
+    // complete before the HELLO exchange.
+    if let Err(e) = conn.wait_established().await {
+        let _ = pc.close().await;
+        return Err(Error::Dial(format!("connection failed: {e}")));
     }
     Ok(Box::new(conn))
 }

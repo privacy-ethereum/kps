@@ -301,7 +301,9 @@ async fn pump(
         match route {
             Some(tx) => {
                 // Inbox full → drop (same as Go).
-                let _ = tx.try_send((pkt, from));
+                if tx.try_send((pkt, from)).is_err() && kps_debug_listener() {
+                    eprintln!("[kps-listener] inbox full/closed: dropping {n}B from {from}");
+                }
             }
             None => {
                 // Not an established WebRTC peer and not a new STUN binding:
@@ -407,7 +409,15 @@ async fn spawn_pc(
                         // MutexGuard must not live across an await).
                         let taken = conn_slot.lock().unwrap().take();
                         if let Some(conn) = taken {
-                            let _ = accept_tx.send(Box::new(conn) as Box<dyn Conn>).await;
+                            // Surface only after mutual HELLO (SPEC §8: accept
+                            // MUST NOT complete before it) — bounded by the
+                            // conn's HELLO timeout. A rejected/failed handshake
+                            // tears the conn down without ever surfacing it.
+                            tokio::spawn(async move {
+                                if conn.wait_established().await.is_ok() {
+                                    let _ = accept_tx.send(Box::new(conn) as Box<dyn Conn>).await;
+                                }
+                            });
                         }
                     }
                     RTCPeerConnectionState::Closed | RTCPeerConnectionState::Failed => {
@@ -478,6 +488,11 @@ fn map_for_socket(local: &SocketAddr, target: SocketAddr) -> SocketAddr {
 // WebRTC side: per-PC packet conn + single-conn mux (Go: pcPacketConn +
 // singleConnMux).
 
+fn kps_debug_listener() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("KPS_DEBUG").is_some())
+}
+
 /// `webrtc::util::Conn` for a single PeerConnection: reads pull from a per-PC
 /// inbox fed by the pump; writes go to the shared real UDP socket.
 struct PcConn {
@@ -495,7 +510,17 @@ impl webrtc::util::Conn for PcConn {
         self.recv_from(buf).await.map(|(n, _)| n)
     }
     async fn recv_from(&self, buf: &mut [u8]) -> webrtc::util::Result<(usize, SocketAddr)> {
-        let mut rx = self.inbox.lock().await;
+        let mut rx = match self.inbox.try_lock() {
+            Ok(rx) => rx,
+            Err(_) => {
+                // A second concurrent reader on this PC's inbox would steal
+                // packets from the live ICE conn (the webrtc-rs mux race).
+                if kps_debug_listener() {
+                    eprintln!("[kps-listener] CONCURRENT inbox readers on {}", self.local);
+                }
+                self.inbox.lock().await
+            }
+        };
         match rx.recv().await {
             Some((pkt, from)) => {
                 let n = pkt.len().min(buf.len());

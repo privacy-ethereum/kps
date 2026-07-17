@@ -1,15 +1,30 @@
-// Internal stream framing (SPEC §6.2). Each WebRTC data-channel message is one
-// frame: a 1-byte type then a type-specific payload. This makes a reliable,
-// ordered, message-oriented data channel present as a byte stream with
-// QUIC-like lifecycle. The framing is internal to KPS; applications see bytes.
+// Internal stream framing (SPEC §6.2, wire version 1). Each WebRTC data-channel
+// message is one frame: a 1-byte type then a type-specific payload. This makes a
+// reliable, ordered, message-oriented data channel present as a byte stream with
+// QUIC-like lifecycle plus per-stream flow-control credit (§6.5). The framing is
+// internal to KPS; applications see bytes.
 
 export const FRAME_DATA = 0x00
 export const FRAME_FIN = 0x01
 export const FRAME_RESET = 0x02
 export const FRAME_STOP_SENDING = 0x03
+export const FRAME_MAX_STREAM_DATA = 0x04
 
-// Largest stream payload carried in one DATA frame; larger writes are split.
-export const MAX_FRAME_PAYLOAD = 16 * 1024
+// A frame (type byte + payload) never exceeds MAX_WEBRTC_FRAME_SIZE: an SCTP
+// user message is reassembled before KPS can inspect it, so credit alone cannot
+// bound one message. DATA therefore carries 1..MAX_FRAME_PAYLOAD bytes; larger
+// writes are split, empty writes produce no frame.
+export const MAX_WEBRTC_FRAME_SIZE = 16_384
+export const MAX_FRAME_PAYLOAD = MAX_WEBRTC_FRAME_SIZE - 1
+
+// Ceiling for every offset, limit, and count (QUIC's integer range, §6.5).
+// JavaScript MUST do this arithmetic in BigInt.
+export const MAX_OFFSET = (1n << 62n) - 1n
+
+// A wire-rule violation by the peer. Callers catch it and close the connection
+// with `protocol-error` (§6.2/§8): within a wire version, malformed input is
+// never tolerated or read as something weaker.
+export class ProtocolViolation extends Error {}
 
 // The error-code set and reason shape live in ./errors (transport-neutral); the
 // framing only needs the type to map codes to the wire uint32 below.
@@ -59,33 +74,52 @@ export function encodeCode(type: number, code: number): Uint8Array {
   return out
 }
 
-// WebRTC CONNECTION_CLOSE (SPEC §8): a bare big-endian uint32 application error
-// code carried on the control channel before teardown — the WebRTC analogue of
-// QUIC CONNECTION_CLOSE. `encodeConnClose` builds it from a reason code;
-// `readConnCloseCode` reads the raw uint32 (0 = no specific reason / clean).
-export function encodeConnClose(code?: KpsErrorCode): Uint8Array {
-  const out = new Uint8Array(4)
-  new DataView(out.buffer).setUint32(0, codeToNum(code), false)
+export function encodeMaxStreamData(value: bigint): Uint8Array {
+  const out = new Uint8Array(9)
+  out[0] = FRAME_MAX_STREAM_DATA
+  new DataView(out.buffer).setBigUint64(1, value, false)
   return out
 }
 
-export function readConnCloseCode(data: Uint8Array): number {
-  if (data.length < 4) return 0
-  return new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(0, false)
-}
+export type ParsedFrame =
+  | { type: 'data'; payload: Uint8Array }
+  | { type: 'fin' }
+  | { type: 'reset'; code: number }
+  | { type: 'stop-sending'; code: number }
+  | { type: 'max-stream-data'; value: bigint }
 
-export interface Frame {
-  type: number
-  payload: Uint8Array
-  code: number
-}
-
-export function decodeFrame(data: Uint8Array): Frame {
+// Parse one data-channel message as a frame, enforcing the wire-version-1 rules
+// strictly: unknown types, wrong payload lengths, empty or oversized DATA, and
+// out-of-range credit are all ProtocolViolations (connection-fatal), not
+// tolerated input.
+export function parseFrame(data: Uint8Array): ParsedFrame {
+  if (data.length === 0) throw new ProtocolViolation('empty data-channel message')
+  if (data.length > MAX_WEBRTC_FRAME_SIZE) {
+    throw new ProtocolViolation(`frame exceeds ${MAX_WEBRTC_FRAME_SIZE} bytes (${data.length})`)
+  }
   const type = data[0]
   const payload = data.subarray(1)
-  let code = 0
-  if ((type === FRAME_RESET || type === FRAME_STOP_SENDING) && payload.length >= 4) {
-    code = new DataView(payload.buffer, payload.byteOffset, payload.byteLength).getUint32(0, false)
+  const view = () => new DataView(payload.buffer, payload.byteOffset, payload.byteLength)
+  switch (type) {
+    case FRAME_DATA:
+      if (payload.length === 0) throw new ProtocolViolation('empty DATA frame')
+      return { type: 'data', payload }
+    case FRAME_FIN:
+      if (payload.length !== 0) throw new ProtocolViolation('FIN with payload')
+      return { type: 'fin' }
+    case FRAME_RESET:
+      if (payload.length !== 4) throw new ProtocolViolation('RESET payload must be 4 bytes')
+      return { type: 'reset', code: view().getUint32(0, false) }
+    case FRAME_STOP_SENDING:
+      if (payload.length !== 4) throw new ProtocolViolation('STOP_SENDING payload must be 4 bytes')
+      return { type: 'stop-sending', code: view().getUint32(0, false) }
+    case FRAME_MAX_STREAM_DATA: {
+      if (payload.length !== 8) throw new ProtocolViolation('MAX_STREAM_DATA payload must be 8 bytes')
+      const value = view().getBigUint64(0, false)
+      if (value > MAX_OFFSET) throw new ProtocolViolation('MAX_STREAM_DATA above MAX_OFFSET')
+      return { type: 'max-stream-data', value }
+    }
+    default:
+      throw new ProtocolViolation(`unknown frame type 0x${type.toString(16)}`)
   }
-  return { type, payload, code }
 }
