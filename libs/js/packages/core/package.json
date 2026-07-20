@@ -16,6 +16,6 @@
     "./webrtc": { "types": "./dist/webrtc.d.ts", "default": "./dist/webrtc.js" }
   },
   "files": ["dist", "src"],
-  "scripts": { "build": "tsc", "prepack": "tsc" },
+  "scripts": { "build": "rm -rf dist && tsc", "prepack": "npm run build" },
   "devDependencies": { "typescript": "^5.6.0" }
 }
