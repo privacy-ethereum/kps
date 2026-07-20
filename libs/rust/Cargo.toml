@@ -22,11 +22,13 @@ anyhow = "1"
 # by rev so builds don't float with the branch.
 # Upstream: https://github.com/webrtc-rs/webrtc/issues/816
 # Vendored dependency patches, each an orphan branch of this repo holding a
-# verbatim crates.io copy plus one fix commit (grep "KPS PATCH"):
+# verbatim crates.io copy plus fix commit(s) (grep "KPS PATCH"). Upstream
+# issues:
 # - webrtc-sctp: read-shutdown drain (webrtc-rs/webrtc#816) + permanent
-#   zero-window deadlock on tail-of-burst loss.
-# - webrtc: negotiated-channel accept race (early inbound message on a
-#   negotiated stream parsed as DCEP, killing the accept loop).
+#   zero-window deadlock on tail-of-burst loss (webrtc-rs/webrtc#822).
+# - webrtc: negotiated-channel accept race — early inbound message on a
+#   negotiated stream parsed as DCEP, killing the accept loop
+#   (webrtc-rs/webrtc#821).
 [patch.crates-io]
 webrtc-sctp = { git = "https://github.com/privacy-ethereum/kps.git", rev = "a73a0a8f9e4f76f3b89ba1155562ec836bcf3f3b" }
 webrtc = { git = "https://github.com/privacy-ethereum/kps.git", rev = "1b5884131892c8f78d2bbf5c829bf75e8c850438" }
