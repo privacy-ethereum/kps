@@ -23,4 +23,19 @@ for (const [name, address] of [['Go server', goAddress], ['@kpstreams/server', j
     expect(ok).toBe(true)
     await expect(page.locator('#status')).toHaveText('done')
   })
+
+  // Crosses the 1 MiB per-stream window, so it exercises real §6.5 credit
+  // (MAX_STREAM_DATA / MAX_DATA) through an actual RTCPeerConnection — the one
+  // path no headless test covers.
+  test(`browser webrtc-client streams a large payload to ${name} (flow control)`, async ({ page }) => {
+    page.on('pageerror', err => console.error('[page error]', err))
+    page.on('console', msg => {
+      if (msg.type() === 'error') console.error('[page console]', msg.text())
+    })
+
+    await page.goto(baseUrl)
+    const ok = await page.evaluate(addr => window.runLargeEcho(addr), address)
+    expect(ok).toBe(true)
+    await expect(page.locator('#status')).toHaveText('done')
+  })
 }

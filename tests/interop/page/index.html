@@ -58,6 +58,47 @@
       await conn.close()
       return echoed === text
     }
+
+    // Large-payload echo: 1.5 MiB crosses the 1 MiB per-stream window (SPEC
+    // §6.5), so this only completes if MAX_STREAM_DATA / MAX_DATA credit is
+    // advertised and honored through a real RTCPeerConnection. Write and read
+    // run concurrently — a write-all-then-read would deadlock at the window.
+    window.runLargeEcho = async function (addr) {
+      setStatus('dialing')
+      const conn = await dial(addr)
+      setStatus('connected')
+      const stream = await conn.openStream()
+      setStatus('stream-open')
+
+      const SIZE = 1536 * 1024
+      const sent = new Uint8Array(SIZE)
+      for (let i = 0; i < SIZE; i++) sent[i] = (i * 2654435761) & 0xff // deterministic
+
+      const writeDone = (async () => {
+        const writer = stream.writable.getWriter()
+        const CHUNK = 64 * 1024
+        for (let off = 0; off < SIZE; off += CHUNK) {
+          await writer.write(sent.subarray(off, Math.min(off + CHUNK, SIZE)))
+        }
+        await writer.close()
+      })()
+
+      const reader = stream.readable.getReader()
+      const got = new Uint8Array(SIZE)
+      let n = 0
+      for (;;) {
+        const { value, done } = await reader.read()
+        if (done) break
+        if (value) { got.set(value.subarray(0, Math.min(value.length, SIZE - n)), n); n += value.length }
+      }
+      await writeDone
+      setStatus('done')
+      await conn.close()
+
+      if (n !== SIZE) return false
+      for (let i = 0; i < SIZE; i++) if (got[i] !== sent[i]) return false
+      return true
+    }
   </script>
 </body>
 </html>
