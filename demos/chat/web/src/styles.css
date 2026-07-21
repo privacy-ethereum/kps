@@ -362,6 +362,84 @@ code {
 .tool-card p { font-size: 0.95rem; margin: 0; }
 .tool-card .arrow { color: var(--violet-bright); font-weight: 700; }
 
+/* Hero tri-language line */
+.hero-langs {
+  display: inline-block; margin-top: 22px;
+  font-size: 0.92rem; color: var(--text-muted);
+}
+.hero-langs strong { color: var(--text-dim); font-weight: 600; }
+.hero-langs:hover { color: var(--text-dim); }
+.hero-langs:hover strong { color: var(--text); }
+
+/* ---- Implementations: language cards ------------------------------------ */
+.lang-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 40px; }
+.lang-card { display: flex; flex-direction: column; }
+.lang-head { margin-bottom: 10px; }
+.lang-head h3 { margin: 0; }
+.lang-card > p { font-size: 0.92rem; margin: 0 0 14px; }
+.lang-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.lang-tags .tag {
+  font-size: 0.72rem; font-weight: 600; letter-spacing: 0.02em;
+  padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-dim);
+}
+.lang-install {
+  margin-top: auto; display: block; font-size: 0.76rem; line-height: 1.5;
+  background: #08060d; border: 1px solid var(--border); color: var(--text-dim);
+  border-radius: var(--radius-sm); padding: 9px 11px; overflow-x: auto; white-space: pre;
+}
+/* The Rust card links to the README instead of a copy-pasteable command,
+   because consuming it needs the vendored [patch.crates-io] block too. */
+.lang-install-link {
+  font-family: var(--sans); white-space: normal; color: var(--violet-bright);
+  transition: border-color 0.2s, color 0.2s;
+}
+.lang-install-link:hover { color: var(--text); border-color: var(--violet-deep); }
+
+/* ---- Interop matrix ----------------------------------------------------- */
+.interop { max-width: 620px; margin: 0 auto 40px; text-align: center; }
+.interop-title { font-weight: 700; font-size: 1.05rem; margin-bottom: 16px; }
+.interop-table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
+.interop-table th, .interop-table td {
+  padding: 11px 12px; border: 1px solid var(--border); text-align: center;
+}
+.interop-table thead th { color: var(--text-muted); font-weight: 700; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; background: var(--surface); }
+.interop-table tbody th { text-align: left; font-weight: 600; color: var(--text); white-space: nowrap; }
+.interop-table .corner { text-align: left; }
+.interop-table .via { display: block; font-weight: 500; font-size: 0.72rem; color: var(--text-muted); font-family: var(--mono); letter-spacing: 0; text-transform: none; }
+.interop-table td { color: var(--ok); font-weight: 700; font-size: 1.05rem; }
+.interop-note { font-size: 0.85rem; color: var(--text-muted); margin: 16px 0 0; }
+
+/* ---- Client + server code, three languages (CSS-only tabs) -------------- */
+.code-duo { display: grid; gap: 24px; max-width: 780px; margin: 0 auto; }
+.code-col .code-wrap { max-width: none; margin: 0; }
+.code-label { font-size: 0.82rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+.lang-tabs input { position: absolute; opacity: 0; pointer-events: none; }
+.lang-tabbar { gap: 4px; }
+.lang-tabbar label {
+  font-family: var(--sans); font-size: 0.82rem; font-weight: 600;
+  color: var(--text-muted); padding: 5px 12px; border-radius: var(--radius-sm);
+  cursor: pointer; transition: background 0.2s, color 0.2s;
+}
+.lang-tabbar label:hover { color: var(--text-dim); }
+.lang-panes pre { margin: 0; padding: 18px 20px; overflow-x: auto; font-size: 0.86rem; line-height: 1.7; color: var(--text-dim); font-family: var(--mono); }
+.lang-pane { display: none; }
+.lang-panes .n { color: var(--teal); }
+#ltc-ts:checked ~ .code-block .pane-ts,
+#ltc-go:checked ~ .code-block .pane-go,
+#ltc-rs:checked ~ .code-block .pane-rs,
+#lts-ts:checked ~ .code-block .pane-ts,
+#lts-go:checked ~ .code-block .pane-go,
+#lts-rs:checked ~ .code-block .pane-rs { display: block; }
+#ltc-ts:checked ~ .code-block label[for="ltc-ts"],
+#ltc-go:checked ~ .code-block label[for="ltc-go"],
+#ltc-rs:checked ~ .code-block label[for="ltc-rs"],
+#lts-ts:checked ~ .code-block label[for="lts-ts"],
+#lts-go:checked ~ .code-block label[for="lts-go"],
+#lts-rs:checked ~ .code-block label[for="lts-rs"] {
+  color: var(--violet-bright); background: rgba(157, 123, 255, 0.12);
+}
+
 /* Final CTA */
 .cta-final { text-align: center; padding: 74px 24px; }
 .cta-final h2 { margin-bottom: 18px; }
@@ -559,6 +637,7 @@ input:focus, select:focus {
 /* ---- Responsive --------------------------------------------------------- */
 @media (max-width: 860px) {
   .steps, .features { grid-template-columns: 1fr; }
+  .lang-grid { grid-template-columns: 1fr; }
   .tools { grid-template-columns: 1fr; }
   .arch { grid-template-columns: 1fr; justify-items: center; gap: 4px; }
   .arch-arrow { transform: rotate(90deg); line-height: 1; }

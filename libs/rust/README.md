@@ -47,6 +47,30 @@ Timeouts/cancellation are caller-side: wrap any call in
 `tokio::time::timeout` (the JS packages express the same thing through
 `AbortSignal.timeout`).
 
+## Using kps in your project
+
+The crate is **not published to crates.io** (it depends on two vendored
+webrtc-rs forks — see below). Depend on it via git:
+
+```toml
+[dependencies]
+kps = { git = "https://github.com/privacy-ethereum/kps" }
+
+# REQUIRED: kps only builds with the two vendored webrtc-rs forks below.
+# Cargo applies [patch] ONLY from the root workspace manifest — a patch in a
+# dependency does NOT propagate to you — so you MUST copy this block verbatim
+# into YOUR workspace-root Cargo.toml. Without it the build fails to compile
+# (or hits the bugs the patches fix).
+[patch.crates-io]
+webrtc-sctp = { git = "https://github.com/privacy-ethereum/kps.git", rev = "a73a0a8f9e4f76f3b89ba1155562ec836bcf3f3b" }
+webrtc      = { git = "https://github.com/privacy-ethereum/kps.git", rev = "1b5884131892c8f78d2bbf5c829bf75e8c850438" }
+```
+
+Both `git` lines must point at the **same revs** this repo's
+[`libs/rust/Cargo.toml`](Cargo.toml) pins; bump them together if you update
+`kps`. This friction is temporary — it goes away once the fixes land upstream
+(see below) and the vendored forks can be dropped.
+
 ## Tests
 
 ```
@@ -59,12 +83,22 @@ transports, including both on one port concurrently. The cross-implementation
 matrix (Rust ↔ Go ↔ JS ↔ browser) lives in `libs/js/test/integration/` and
 `tests/interop/`.
 
-## Vendored webrtc-sctp patch
+## Vendored webrtc-rs patches (required)
 
-`[patch.crates-io]` in `Cargo.toml` swaps `webrtc-sctp` for the
-`vendor/webrtc-sctp` orphan branch of this repo (pinned by rev): verbatim crates.io 0.13.0
-plus a drain-the-reassembly-queue-before-honoring-`read_shutdown` fix (grep
-`KPS PATCH`). Without it, a peer that writes and promptly closes a data
-channel loses data at a webrtc-rs receiver ~10% of the time. Reported
-upstream as [webrtc-rs/webrtc#816](https://github.com/webrtc-rs/webrtc/issues/816);
-remove when a release ships an equivalent fix.
+`kps` swaps two crates.io dependencies for patched forks via
+`[patch.crates-io]` in [`Cargo.toml`](Cargo.toml). Each fork is an **orphan
+branch of this repo** holding a *verbatim* crates.io copy plus one or two fix
+commits (grep `KPS PATCH` for the exact diff), pinned by rev so builds don't
+float with the branch. Anyone consuming `kps` must replicate the same patch
+block (see [Using kps in your project](#using-kps-in-your-project)) — Cargo
+does not inherit `[patch]` from a dependency.
+
+| Crate | Branch / rev | Fix | Upstream |
+|-------|--------------|-----|----------|
+| `webrtc-sctp` | `vendor/webrtc-sctp` @ `a73a0a8` | (1) drain the reassembly queue before honoring `read_shutdown` — a peer that writes then promptly closes a channel otherwise loses data at a webrtc-rs receiver ~10% of the time; (2) accept the in-sequence chunk at a full receive buffer — otherwise a tail-of-burst drop deadlocks the association at a permanent zero window | [#816](https://github.com/webrtc-rs/webrtc/issues/816), [#822](https://github.com/webrtc-rs/webrtc/issues/822) |
+| `webrtc` | `vendor/webrtc` @ `1b58841` | adopt a negotiated data channel's stream in the accept loop — an early inbound message (KPS's HELLO) otherwise gets parsed as DCEP, fails with `InvalidMessageType`, and silently kills the accept loop for the whole connection | [#821](https://github.com/webrtc-rs/webrtc/issues/821) |
+
+Each branch is `<verbatim crates.io copy>` then `<KPS PATCH commit(s)>`, so the
+diff against upstream is exactly those commits. Drop the patches (and this
+section) once releases ship equivalent fixes; bump the pinned revs here and in
+any consumer's workspace together if the forks are updated.

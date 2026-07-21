@@ -28,7 +28,6 @@
         </div>
         <nav class="nav-links">
           <a href="#how">How it works</a>
-          <a href="#services">Demo</a>
           <a href="https://github.com/privacy-ethereum/kps/blob/main/SPEC.md" target="_blank" rel="noopener">Spec</a>
           <a class="gh" href="https://github.com/privacy-ethereum/kps" target="_blank" rel="noopener" aria-label="View source on GitHub" title="View source on GitHub">
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.92.58.1.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.69-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.18 1.18.92-.26 1.91-.39 2.89-.39.98 0 1.97.13 2.89.39 2.21-1.49 3.18-1.18 3.18-1.18.63 1.58.23 2.75.11 3.04.74.8 1.19 1.83 1.19 3.09 0 4.42-2.69 5.4-5.25 5.68.41.35.78 1.05.78 2.12 0 1.53-.01 2.76-.01 3.14 0 .31.21.67.8.56C20.71 21.39 24 17.08 24 12c0-6.35-5.15-11.5-11.5-11.5z"/></svg>
@@ -59,6 +58,7 @@
               <a class="btn" href="#demo">Try the live demo →</a>
               <a class="btn secondary" href="https://github.com/privacy-ethereum/kps/blob/main/SPEC.md" target="_blank" rel="noopener">Read the spec →</a>
             </div>
+            <a class="hero-langs" href="#languages">client &amp; server in <strong>TypeScript</strong> · <strong>Go</strong> · <strong>Rust</strong></a>
           </div>
           <figure class="hero-viz">
             <img
@@ -78,9 +78,10 @@
               <h2>The web can only talk to <em>names</em></h2>
               <p>
                 Browsers migrated the web from http to https in the mid-2010s. That
-                <strong>s</strong> adds TLS encryption — but it also demands a domain
-                controlled by a registrar and a certificate signed by an authority.
-                KPS restores the freedom to talk to a cryptographic identity directly.
+                <strong>s</strong> adds TLS encryption — but it means you need permission
+                from a certificate authority for your origin (usually a domain from another
+                authority). KPS restores the freedom to talk to a cryptographic identity
+                directly.
               </p>
             </div>
           </section>
@@ -89,7 +90,7 @@
           <section class="section wrap" id="how">
             <div class="section-head">
               <div class="eyebrow">How it works</div>
-              <h2>The whole identity is the address</h2>
+              <h2>The certhash is the identity</h2>
               <p>The certhash is the SHA-256 of the server's self-signed certificate, multibase-encoded. Pin it, and the connection can't be intercepted.</p>
             </div>
             <div class="steps">
@@ -105,28 +106,124 @@
               </div>
               <div class="card step">
                 <div class="step-num">3</div>
-                <h3>Pin, or hang up</h3>
+                <h3>Verify certificate hash or hang up</h3>
                 <p>The client accepts the handshake only if the presented certificate hashes to the pinned value — the browser over DTLS, native clients over QUIC's TLS 1.3.</p>
               </div>
             </div>
           </section>
 
-          <!-- The address, up close -->
-          <section class="section wrap">
+          <!-- Implementations: one wire, three languages -->
+          <section class="section wrap" id="languages">
             <div class="section-head">
-              <div class="eyebrow">The address</div>
-              <h2>Three fields, one identity</h2>
+              <div class="eyebrow">Implementations</div>
+              <h2>One wire, <span class="gradient-text">three languages</span></h2>
+              <p>KPS has a client <em>and</em> a server in TypeScript, Go, and Rust — all speaking the identical wire protocol. Any client dials any server, browser included, verified end-to-end in CI.</p>
             </div>
-            <div class="code-wrap">
-              <div class="code-block">
-                <div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="name">dial.js</span></div>
-<pre><span class="k">import</span> { dial } <span class="k">from</span> <span class="s">'@kpstreams/webrtc-client'</span>;
 
-<span class="c">// ip:port:certhash — the certhash pins the exact key</span>
-<span class="k">const</span> conn = <span class="k">await</span> <span class="f">dial</span>(<span class="s">'192.168.1.50:41108:uEiA…9Qw'</span>);
+            <div class="lang-grid">
+              <div class="card lang-card">
+                <div class="lang-head"><h3>TypeScript</h3></div>
+                <p>Browser client over WebRTC, Node client over QUIC, and a Node server. Typed, published to npm.</p>
+                <div class="lang-tags"><span class="tag">client</span><span class="tag">server</span><span class="tag">WebRTC</span><span class="tag">QUIC</span></div>
+                <code class="lang-install">npm install @kpstreams/webrtc-client</code>
+              </div>
+              <div class="card lang-card">
+                <div class="lang-head"><h3>Go</h3></div>
+                <p>Client and server, both transports on one UDP port. A Go module you can <code>go get</code>.</p>
+                <div class="lang-tags"><span class="tag">client</span><span class="tag">server</span><span class="tag">WebRTC</span><span class="tag">QUIC</span></div>
+                <code class="lang-install">go get github.com/privacy-ethereum/kps/libs/go</code>
+              </div>
+              <div class="card lang-card">
+                <div class="lang-head"><h3>Rust</h3></div>
+                <p>Client and server, both transports, async on Tokio. The <code>kps</code> crate.</p>
+                <div class="lang-tags"><span class="tag">client</span><span class="tag">server</span><span class="tag">WebRTC</span><span class="tag">QUIC</span></div>
+                <a class="lang-install lang-install-link" href="https://github.com/privacy-ethereum/kps/tree/main/libs/rust#using-kps-in-your-project" target="_blank" rel="noopener">git dependency + vendored patches → libs/rust README</a>
+              </div>
+            </div>
 
-<span class="c">// unnamed, reliable, multiplexed byte stream — frame your own protocol inside</span>
-<span class="k">const</span> stream = <span class="k">await</span> conn.<span class="f">openStream</span>();</pre>
+            <!-- Interop matrix -->
+            <div class="interop">
+              <div class="interop-title">Every client dials every server</div>
+              <table class="interop-table">
+                <thead>
+                  <tr><th></th><th colspan="3">Server</th></tr>
+                  <tr><th class="corner">Client</th><th>TS</th><th>Go</th><th>Rust</th></tr>
+                </thead>
+                <tbody>
+                  <tr><th>Browser <span class="via">WebRTC</span></th><td>✓</td><td>✓</td><td>✓</td></tr>
+                  <tr><th>Go <span class="via">QUIC / WebRTC</span></th><td>✓</td><td>✓</td><td>✓</td></tr>
+                  <tr><th>Rust <span class="via">QUIC / WebRTC</span></th><td>✓</td><td>✓</td><td>✓</td></tr>
+                </tbody>
+              </table>
+              <p class="interop-note">Same <code>ip:port:certhash</code> address, same UDP port. Browsers dial over WebRTC; native clients default to QUIC.</p>
+            </div>
+
+            <!-- Same API, three languages: client + server -->
+            <div class="code-duo">
+              <div class="code-col">
+                <div class="code-label">Client — dial an address, open a stream</div>
+                <div class="lang-tabs code-wrap">
+                  <input type="radio" name="tab-client" id="ltc-ts" checked />
+                  <input type="radio" name="tab-client" id="ltc-go" />
+                  <input type="radio" name="tab-client" id="ltc-rs" />
+                  <div class="code-block">
+                    <div class="code-bar lang-tabbar">
+                      <label for="ltc-ts">TypeScript</label>
+                      <label for="ltc-go">Go</label>
+                      <label for="ltc-rs">Rust</label>
+                    </div>
+                    <div class="lang-panes">
+<pre class="lang-pane pane-ts"><span class="k">import</span> { dial } <span class="k">from</span> <span class="s">'@kpstreams/webrtc-client'</span>;
+
+<span class="k">const</span> conn   = <span class="k">await</span> <span class="f">dial</span>(<span class="s">'203.0.113.5:41108:uEiA…9Qw'</span>);
+<span class="k">const</span> stream = <span class="k">await</span> conn.<span class="f">openStream</span>(); <span class="c">// reliable, multiplexed bytes</span></pre>
+<pre class="lang-pane pane-go"><span class="k">import</span> kps <span class="s">"github.com/privacy-ethereum/kps/libs/go"</span>
+
+conn, _   := kps.<span class="f">Dial</span>(ctx, <span class="s">"203.0.113.5:41108:uEiA…9Qw"</span>)
+stream, _ := conn.<span class="f">OpenStream</span>(ctx) <span class="c">// reliable, multiplexed bytes</span></pre>
+<pre class="lang-pane pane-rs"><span class="k">use</span> kps::dial;
+
+<span class="k">let</span> conn   = <span class="f">dial</span>(<span class="s">"203.0.113.5:41108:uEiA…9Qw"</span>).<span class="k">await</span>?;
+<span class="k">let</span> stream = conn.<span class="f">open_stream</span>().<span class="k">await</span>?; <span class="c">// reliable, multiplexed bytes</span></pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="code-col">
+                <div class="code-label">Server — accept connections and their streams</div>
+                <div class="lang-tabs code-wrap">
+                  <input type="radio" name="tab-server" id="lts-ts" checked />
+                  <input type="radio" name="tab-server" id="lts-go" />
+                  <input type="radio" name="tab-server" id="lts-rs" />
+                  <div class="code-block">
+                    <div class="code-bar lang-tabbar">
+                      <label for="lts-ts">TypeScript</label>
+                      <label for="lts-go">Go</label>
+                      <label for="lts-rs">Rust</label>
+                    </div>
+                    <div class="lang-panes">
+<pre class="lang-pane pane-ts"><span class="k">import</span> { listen } <span class="k">from</span> <span class="s">'@kpstreams/server'</span>;
+
+<span class="k">const</span> srv    = <span class="k">await</span> <span class="f">listen</span>({ port: <span class="n">41108</span> });
+console.<span class="f">log</span>(srv.<span class="f">address</span>(<span class="s">'203.0.113.5'</span>)); <span class="c">// ip:port:certhash</span>
+<span class="k">const</span> conn   = <span class="k">await</span> srv.<span class="f">accept</span>();
+<span class="k">const</span> stream = <span class="k">await</span> conn.<span class="f">acceptStream</span>();</pre>
+<pre class="lang-pane pane-go"><span class="k">import</span> kps <span class="s">"github.com/privacy-ethereum/kps/libs/go"</span>
+
+ln, _     := kps.<span class="f">Listen</span>(ctx, <span class="s">":41108"</span>, kps.Options{})
+fmt.<span class="f">Println</span>(ln.<span class="f">Address</span>(<span class="s">"203.0.113.5"</span>)) <span class="c">// ip:port:certhash</span>
+conn, _   := ln.<span class="f">Accept</span>(ctx)
+stream, _ := conn.<span class="f">AcceptStream</span>(ctx)</pre>
+<pre class="lang-pane pane-rs"><span class="k">use</span> kps::{listen, ListenOptions};
+
+<span class="k">let</span> ln     = <span class="f">listen</span>(<span class="s">":41108"</span>, ListenOptions::<span class="f">default</span>()).<span class="k">await</span>?;
+<span class="f">println!</span>(<span class="s">"{}"</span>, ln.<span class="f">address</span>(<span class="s">"203.0.113.5"</span>)); <span class="c">// ip:port:certhash</span>
+<span class="k">let</span> conn   = ln.<span class="f">accept</span>().<span class="k">await</span>?;
+<span class="k">let</span> stream = conn.<span class="f">accept_stream</span>().<span class="k">await</span>?;</pre>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </section>
@@ -162,25 +259,6 @@
               <div class="arch-node"><div class="t">KPS server</div><p class="d">One self-signed cert; its hash <em>is</em> its identity</p></div>
             </div>
             <p class="arch-note">The full details live in the <a href="https://github.com/privacy-ethereum/kps/blob/main/SPEC.md" target="_blank" rel="noopener">protocol spec</a> and <a href="https://github.com/privacy-ethereum/kps/blob/main/SECURITY.md" target="_blank" rel="noopener">security model</a>.</p>
-          </section>
-
-          <!-- What runs on top -->
-          <section class="section wrap" id="services">
-            <div class="section-head">
-              <div class="eyebrow">This demo</div>
-              <h2>Two services on one stream primitive</h2>
-              <p>KPS streams are unnamed, so the demo routes its own: each stream opens with a one-line selector, then that service's messages follow.</p>
-            </div>
-            <div class="tools">
-              <a class="card tool-card" href="#demo">
-                <h3>Encrypted chat <span class="arrow">→</span></h3>
-                <p>A public bulletin plus end-to-end encrypted DMs. Each client mints a fresh Ed25519 identity and signs its DM key, so the server can route but can't read or forge messages.</p>
-              </a>
-              <a class="card tool-card" href="#demo">
-                <h3>Block explorer <span class="arrow">→</span></h3>
-                <p>The server proxies JSON-RPC to public endpoints for Ethereum, Arbitrum, Optimism, Base and Polygon; the browser renders a small live explorer from the responses.</p>
-              </a>
-            </div>
           </section>
 
           <!-- Final CTA -->
