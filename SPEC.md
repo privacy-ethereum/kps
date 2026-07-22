@@ -1,11 +1,11 @@
-# KPS Protocol Specification (draft v0.2.0)
+# KPS Protocol Specification (draft v0.2.1)
 
 > **Status:** draft for review. This document defines the wire-level and
 > behavioural contract that every KPS implementation (Go, TypeScript, Rust,
 > future Swift/Kotlin) must satisfy. The language libraries are *implementations
 > of this spec*, not the spec itself. Where this document and a library
 > disagree, this document is the intended source of truth and the library is a
-> bug. The document version tracks the library releases (this draft, 0.2.0,
+> bug. The document version tracks the library releases (this draft, 0.2.1,
 > pairs with the 0.2.x packages); the WebRTC **wire version** (§8 HELLO,
 > currently 1) independently counts incompatible wire revisions.
 
@@ -200,8 +200,10 @@ message boundaries.** It models a subset of QUIC bidirectional streams.
 
 ### 6.1 Operations
 
-- **read bytes** — returns available bytes; EOF after the peer's write half
-  finishes gracefully.
+- **read bytes** — returns available bytes; **EOF if and only if the peer's
+  write half finished (FIN)**. Any other terminal condition — peer `reset`, local
+  `cancelRead`/`close`, or connection close/loss — makes a pending or subsequent
+  read **fail with an error carrying a reason code, never EOF** (§9.2).
 - **write bytes** — with end-to-end backpressure: a write blocks / signals
   not-ready when in-flight data reaches the peer's advertised receive window
   (§6.3, §6.5), not merely when a local send buffer is full.
@@ -666,6 +668,42 @@ unknown received code maps to `internal-error`.
 | `queue-full`        | `9`           | bounded inbound queue full; item rejected            |
 | `permission-denied` | `10`          | refused by policy                                    |
 | `internal-error`    | `11`          | unspecified local failure; also the unknown-code sink |
+
+### 9.2 Local read/write results
+
+The §9 table above is **peer-observable** behaviour (what the remote endpoint
+sees on the wire). The **local** result of a read or write when a stream
+terminates is defined here, so that a holder of only a stream — not the
+connection — can distinguish an unfinished stream from a completed one.
+
+**A read yields EOF if and only if the peer's write half finished via FIN; every
+other terminal condition yields an error** carrying a reason code:
+
+| Local terminal condition        | local `read`                 | local `write`                |
+|---------------------------------|------------------------------|------------------------------|
+| peer FIN received               | **EOF** (after buffered bytes) | unaffected                 |
+| peer RESET received             | **error** (peer's code)      | unaffected                   |
+| peer STOP_SENDING received      | unaffected                   | **error** (peer's code)      |
+| local `cancelRead(code)`        | **error** (`cancelled`/code) | unaffected                   |
+| local `resetWrite(code)`        | unaffected                   | **error** (`reset`/code)     |
+| local `close(code?)`            | **error** (`closed`/code)    | **error** (`closed`/code)    |
+| connection closed locally       | **error** (`closed`)         | **error** (`closed`)         |
+| connection lost                 | **error** (`network-error`)  | **error** (`network-error`)  |
+
+The error's concrete representation is implementation- and transport-native
+(e.g. Go `io.EOF` for the EOF row vs. a `*StreamError`/`ApplicationError`; Rust
+`Ok(0)` vs. an `io::Error`; a rejected promise in JS) — this section constrains
+only **EOF-vs-error** and the accompanying reason code, not the language-level
+type. This matches native QUIC: quic-go's `CancelRead`/connection close surface a
+`StreamError`/`ApplicationError`, and quinn's `stop`/connection loss surface
+`ReadError::ClosedStream`/`ConnectionLost` (`io::ErrorKind::NotConnected`) —
+never a spurious clean EOF.
+
+**`closed`** (§6.1) reports `ok` for an orderly local teardown (a `close()` with
+no code, or normal completion) and not-`ok` with the reason otherwise (peer
+reset, coded close, connection failure). Bilateral FIN is **not** required for a
+clean `close()` to report `ok`; it is the *read* operation that is unambiguously
+an error when it cannot be fulfilled and no FIN was seen.
 
 ---
 

@@ -64,6 +64,10 @@ export class KpsStream implements CoreStream {
   #peerStop: KpsReason | null = null
   #localTerminal: 'fin' | 'reset' | null = null
   #readCancelled = false
+  // The reason a locally-terminated read half surfaces to a pending/subsequent
+  // read. Per SPEC §9.2, EOF is reserved for the peer's FIN; a local
+  // cancelRead/close or a connection teardown must make the read *error*.
+  #readError: KpsReason | null = null
   #channelClosed = false
   #retiredFired = false
 
@@ -104,7 +108,11 @@ export class KpsStream implements CoreStream {
       {
         pull: async (controller) => {
           for (;;) {
-            if (this.#readCancelled) { controller.close(); return }
+            // Local termination of the read half is an error, never EOF (§9.2):
+            // cancelRead/close and connection teardown all land here. (A
+            // consumer's own reader.cancel() still sees {done:true} — WHATWG
+            // closes the stream, so this error() is a late no-op for them.)
+            if (this.#readCancelled) { controller.error(streamError(this.#readError ?? { code: 'cancelled' })); return }
             const chunk = this.#inbuf.shift()
             if (chunk) {
               controller.enqueue(chunk)
@@ -274,6 +282,7 @@ export class KpsStream implements CoreStream {
   async cancelRead(reason?: KpsReason): Promise<void> {
     if (this.#readCancelled) return
     this.#readCancelled = true
+    this.#readError = reason ?? { code: 'cancelled' }
     this.#sf.markCancelled() // no further stream credit; discards still free MAX_DATA
     this.#discardInbuf()
     if (!this.#peerFin && !this.#peerReset && this.#ch.isOpen()) {
@@ -306,6 +315,7 @@ export class KpsStream implements CoreStream {
   destroy(reason?: KpsReason): void {
     this.#discardInbuf()
     this.#readCancelled = true
+    this.#readError = reason ?? { code: 'closed', message: 'kps: connection closed' }
     this.#sf.failSend(streamError(reason ?? { code: 'closed', message: 'kps: connection closed' }))
     this.#settleOpen(new Error('kps: connection closed'))
     this.#settle(reason ? { ok: false, reason } : { ok: true })

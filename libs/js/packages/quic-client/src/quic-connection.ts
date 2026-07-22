@@ -14,7 +14,7 @@ import {
 } from '@kpstreams/core'
 import quicPkg from '@infisical/quic'
 import type { QUICConnection } from '@infisical/quic'
-import { QuicStream } from './quic-stream.js'
+import { QuicStream, errorOpenHalves } from './quic-stream.js'
 
 // CommonJS module with non-analyzable named exports — destructure the default.
 const { events: quicEvents } = quicPkg as unknown as { events: { EventQUICConnectionStream: { name: string } } }
@@ -157,7 +157,17 @@ export class QuicConnection implements CoreConnection {
   }
 
   async close(_reason?: KpsReason): Promise<void> {
-    const qc = this.#qc as unknown as { stop?: (o?: unknown) => Promise<void> }
+    const qc = this.#qc as unknown as {
+      stop?: (o?: unknown) => Promise<void>
+      streamMap?: Map<unknown, unknown>
+    }
+    // stop({force:true}) force-destroys every still-open stream with reason
+    // `errorLast` (null after a clean session), so a parked read rejects with a
+    // bare `null` — un-introspectable, and crashes the consumer's process
+    // (kps#3). Error each still-open half with a proper KPS 'closed' reason
+    // first: the read/write still rejects (a local close is not a FIN), but with
+    // a real coded Error instead of null.
+    for (const qs of qc.streamMap?.values() ?? []) errorOpenHalves(qs)
     try { await qc.stop?.({ force: true }) } catch { /* ignore */ }
   }
 

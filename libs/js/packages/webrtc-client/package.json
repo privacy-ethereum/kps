@@ -1,6 +1,6 @@
 {
   "name": "@kpstreams/webrtc-client",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Browser WebRTC client for KPS: dial a server pinned by its certificate hash and open/accept unnamed byte streams. Zero native deps.",
   "keywords": ["kps", "webrtc", "webrtc-direct", "certhash", "key-pinning", "browser", "secure-transport", "p2p", "no-ca"],
   "type": "module",

@@ -114,7 +114,7 @@ export async function openStream(addr: string, opts?: DialOptions): Promise<Stre
   const conn = await dial(addr, opts)
   try {
     const stream = await conn.openStream({ signal: opts?.signal })
-    void stream.closed.finally(() => { void conn.close() })
+    stream.closed.finally(() => { void conn.close() }).catch(() => {})
     return stream
   } catch (err) {
     await conn.close()

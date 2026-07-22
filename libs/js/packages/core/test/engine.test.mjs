@@ -617,3 +617,65 @@ test('engine: graceful close sends CONNECTION_CLOSE with the code', async () => 
   const info = await core.closed
   assert.equal(info.ok, true)
 })
+
+// Park a read on `stream` (no inbound bytes) and return a promise that settles
+// to {done} | {err} — handler attached synchronously so a rejection is handled.
+function parkRead(stream) {
+  return stream.readable.getReader().read().then(
+    v => ({ done: v.done }),
+    e => ({ err: e }),
+  )
+}
+
+test('engine: §9.2 — local read termination errors a parked read, never EOF', async () => {
+  // (a) local stream.close() → read rejects with 'closed'
+  {
+    const { coreA, coreB } = linkedCores()
+    await coreA.established
+    const a = await coreA.openStream()
+    await coreB.acceptStream()
+    const settled = parkRead(a)
+    await settle()
+    await a.close()
+    const r = await settled
+    assert.equal(r.done, undefined, 'must not resolve as EOF')
+    assert.equal(r.err?.code, 'closed')
+  }
+  // (b) local cancelRead(code) → read rejects with that code
+  {
+    const { coreA, coreB } = linkedCores()
+    await coreA.established
+    const a = await coreA.openStream()
+    await coreB.acceptStream()
+    const settled = parkRead(a)
+    await settle()
+    await a.cancelRead({ code: 'cancelled' })
+    const r = await settled
+    assert.equal(r.err?.code, 'cancelled')
+  }
+  // (c) connection close (no reason) → read on a still-open stream rejects 'closed'
+  {
+    const { coreA, coreB } = linkedCores()
+    await coreA.established
+    const a = await coreA.openStream()
+    await coreB.acceptStream()
+    const settled = parkRead(a)
+    await settle()
+    coreA.close() // no reason → orderly local teardown
+    const r = await settled
+    assert.equal(r.done, undefined, 'connection close must error the read, not EOF')
+    assert.equal(r.err?.code, 'closed')
+  }
+})
+
+test('engine: §9.2 — peer FIN still yields clean EOF (contrast)', async () => {
+  const { coreA, coreB } = linkedCores()
+  await coreA.established
+  const a = await coreA.openStream()
+  const b = await coreB.acceptStream()
+  const settled = parkRead(a)
+  await settle()
+  await b.closeWrite() // peer's write half finishes → FIN
+  const r = await settled
+  assert.deepEqual(r, { done: true }, 'peer FIN → EOF, no error')
+})

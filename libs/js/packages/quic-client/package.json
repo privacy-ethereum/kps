@@ -1,6 +1,6 @@
 {
   "name": "@kpstreams/quic-client",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Native QUIC client for KPS: dial a server pinned by its certificate hash.",
   "keywords": ["kps", "quic", "certhash", "key-pinning", "secure-transport", "p2p", "no-ca"],
   "type": "module",
@@ -15,7 +15,7 @@
   "engines": { "node": ">=20" },
   "dependencies": {
     "@kpstreams/core": "^0.2.0",
-    "@infisical/quic": "^1.0.8",
+    "@infisical/quic": "1.0.8",
     "@matrixai/logger": "^3.1.3"
   },
   "scripts": { "build": "rm -rf dist && tsc", "prepack": "npm run build" },

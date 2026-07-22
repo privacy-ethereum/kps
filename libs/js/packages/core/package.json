@@ -1,6 +1,6 @@
 {
   "name": "@kpstreams/core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Transport-neutral core for KPS: addresses, certhash, error model, and the Connection/Stream contract (plus the WebRTC wire protocol under ./webrtc). Zero runtime deps.",
   "keywords": ["kps", "certhash", "key-pinning", "secure-transport", "webrtc", "quic", "p2p", "no-ca"],
   "type": "module",

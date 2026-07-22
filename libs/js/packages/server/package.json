@@ -1,6 +1,6 @@
 {
   "name": "@kpstreams/server",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "KPS server: accepts WebRTC and QUIC clients under one pinned identity.",
   "keywords": ["kps", "webrtc", "quic", "certhash", "key-pinning", "server", "secure-transport", "p2p", "no-ca"],
   "type": "module",
@@ -16,7 +16,7 @@
   "dependencies": {
     "@kpstreams/core": "^0.2.0",
     "node-datachannel": "^0.32.0",
-    "@infisical/quic": "^1.0.8",
+    "@infisical/quic": "1.0.8",
     "@matrixai/logger": "^3.1.3",
     "@peculiar/x509": "^2.0.0",
     "reflect-metadata": "^0.2.0"
