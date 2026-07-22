@@ -1133,7 +1133,7 @@ dependencies = [
 
 [[package]]
 name = "kps"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1158,7 +1158,7 @@ dependencies = [
 
 [[package]]
 name = "kps-dial"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "kps",
@@ -1167,7 +1167,7 @@ dependencies = [
 
 [[package]]
 name = "kps-server"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "env_logger",
