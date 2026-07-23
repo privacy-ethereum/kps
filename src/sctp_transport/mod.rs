@@ -260,12 +260,20 @@ impl RTCSctpTransport {
                         claimed = true;
                         break;
                     }
-                    // An already-attached channel with this stream id (id
-                    // reuse) also owns the stream's data via its read loop.
-                    if let Some(inner) = &*rtc_dc.data_channel.lock().await {
-                        if inner.stream_identifier() == stream_id {
-                            claimed = true;
-                            break;
+                    // An already-attached, still-OPEN channel with this stream
+                    // id owns the stream's data via its own read loop, so this
+                    // accepted stream belongs to it. The ready_state gate is
+                    // load-bearing: closed channels are never pruned from
+                    // `data_channels`, so a browser that frees and reuses a low
+                    // SCTP id (2, 4, 2, ...) would otherwise match the stale,
+                    // closed entry here and this genuinely new stream would be
+                    // swallowed — no DCEP handshake, no on_data_channel (kps#4).
+                    if rtc_dc.ready_state() == RTCDataChannelState::Open {
+                        if let Some(inner) = &*rtc_dc.data_channel.lock().await {
+                            if inner.stream_identifier() == stream_id {
+                                claimed = true;
+                                break;
+                            }
                         }
                     }
                 }
