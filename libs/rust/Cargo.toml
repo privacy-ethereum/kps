@@ -26,9 +26,12 @@ anyhow = "1"
 # issues:
 # - webrtc-sctp: read-shutdown drain (webrtc-rs/webrtc#816) + permanent
 #   zero-window deadlock on tail-of-burst loss (webrtc-rs/webrtc#822).
-# - webrtc: negotiated-channel accept race — early inbound message on a
-#   negotiated stream parsed as DCEP, killing the accept loop
-#   (webrtc-rs/webrtc#821).
+# - webrtc: two KPS-patch commits. (1) negotiated-channel accept race — early
+#   inbound message on a negotiated stream parsed as DCEP, killing the accept
+#   loop (webrtc-rs/webrtc#821). (2) a regression from (1), NOT an upstream bug:
+#   the id-reuse claim matched stale CLOSED channels (never pruned from
+#   data_channels), so a browser's reused SCTP stream id was swallowed — read
+#   hangs after ~2 streams (kps#4). Fixed by gating the claim on ReadyState::Open.
 [patch.crates-io]
 webrtc-sctp = { git = "https://github.com/privacy-ethereum/kps.git", rev = "a73a0a8f9e4f76f3b89ba1155562ec836bcf3f3b" }
-webrtc = { git = "https://github.com/privacy-ethereum/kps.git", rev = "1b5884131892c8f78d2bbf5c829bf75e8c850438" }
+webrtc = { git = "https://github.com/privacy-ethereum/kps.git", rev = "4982e1c1cdce3baa3f703a746367a5e53ca64928" }

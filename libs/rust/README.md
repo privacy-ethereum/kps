@@ -63,7 +63,7 @@ kps = { git = "https://github.com/privacy-ethereum/kps" }
 # (or hits the bugs the patches fix).
 [patch.crates-io]
 webrtc-sctp = { git = "https://github.com/privacy-ethereum/kps.git", rev = "a73a0a8f9e4f76f3b89ba1155562ec836bcf3f3b" }
-webrtc      = { git = "https://github.com/privacy-ethereum/kps.git", rev = "1b5884131892c8f78d2bbf5c829bf75e8c850438" }
+webrtc      = { git = "https://github.com/privacy-ethereum/kps.git", rev = "4982e1c1cdce3baa3f703a746367a5e53ca64928" }
 ```
 
 Both `git` lines must point at the **same revs** this repo's
@@ -96,7 +96,7 @@ does not inherit `[patch]` from a dependency.
 | Crate | Branch / rev | Fix | Upstream |
 |-------|--------------|-----|----------|
 | `webrtc-sctp` | `vendor/webrtc-sctp` @ `a73a0a8` | (1) drain the reassembly queue before honoring `read_shutdown` — a peer that writes then promptly closes a channel otherwise loses data at a webrtc-rs receiver ~10% of the time; (2) accept the in-sequence chunk at a full receive buffer — otherwise a tail-of-burst drop deadlocks the association at a permanent zero window | [#816](https://github.com/webrtc-rs/webrtc/issues/816), [#822](https://github.com/webrtc-rs/webrtc/issues/822) |
-| `webrtc` | `vendor/webrtc` @ `1b58841` | adopt a negotiated data channel's stream in the accept loop — an early inbound message (KPS's HELLO) otherwise gets parsed as DCEP, fails with `InvalidMessageType`, and silently kills the accept loop for the whole connection | [#821](https://github.com/webrtc-rs/webrtc/issues/821) |
+| `webrtc` | `vendor/webrtc` @ `4982e1c` | (1) adopt a negotiated data channel's stream in the accept loop — an early inbound message (KPS's HELLO) otherwise gets parsed as DCEP, fails with `InvalidMessageType`, and silently kills the accept loop for the whole connection; (2) gate the id-reuse claim on `ReadyState::Open` — otherwise a stale CLOSED channel (never pruned from `data_channels`) shadows a browser's reused SCTP stream id and the new stream is swallowed (read hangs after ~2 streams) | [#821](https://github.com/webrtc-rs/webrtc/issues/821); (2) is a regression from (1), not upstream ([kps#4](https://github.com/privacy-ethereum/kps/issues/4)) |
 
 Each branch is `<verbatim crates.io copy>` then `<KPS PATCH commit(s)>`, so the
 diff against upstream is exactly those commits. Drop the patches (and this

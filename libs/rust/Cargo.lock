@@ -2554,7 +2554,7 @@ dependencies = [
 [[package]]
 name = "webrtc"
 version = "0.14.0"
-source = "git+https://github.com/privacy-ethereum/kps.git?rev=1b5884131892c8f78d2bbf5c829bf75e8c850438#1b5884131892c8f78d2bbf5c829bf75e8c850438"
+source = "git+https://github.com/privacy-ethereum/kps.git?rev=4982e1c1cdce3baa3f703a746367a5e53ca64928#4982e1c1cdce3baa3f703a746367a5e53ca64928"
 dependencies = [
  "arc-swap",
  "async-trait",
