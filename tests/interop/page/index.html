@@ -99,6 +99,63 @@
       for (let i = 0; i < SIZE; i++) if (got[i] !== sent[i]) return false
       return true
     }
+
+    // Sustained cycling: open N streams sequentially on ONE dial(), each fully
+    // closed before the next. Every close resets and frees its SCTP stream id,
+    // so the next openStream reuses the lowest free id (2, 4, 2, ...) — the
+    // browser-specific id-reuse that headless Go/Rust clients don't exercise
+    // (they allocate ids monotonically). Returns the count that completed; a
+    // server that routes a reused id to a stale closed DataChannel (kps#4) makes
+    // a read hang, so a per-stream guard bounds it and reports where it stalled.
+    window.runManyStreams = async function (addr, n) {
+      setStatus('dialing')
+      const conn = await dial(addr)
+      setStatus('connected')
+      const enc = new TextEncoder()
+      const dec = new TextDecoder()
+      let completed = 0
+      try {
+        for (let i = 0; i < n; i++) {
+          const stream = await conn.openStream()
+          const text = `stream-${i}`
+
+          const writer = stream.writable.getWriter()
+          await writer.write(enc.encode(text))
+          await writer.close()
+
+          const reader = stream.readable.getReader()
+          const chunks = []
+          const drain = (async () => {
+            for (;;) {
+              const { value, done } = await reader.read()
+              if (done) break
+              if (value) chunks.push(value)
+            }
+          })()
+          let timer
+          const guard = new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error(`read timed out on stream ${i}`)), 5000)
+          })
+          await Promise.race([drain, guard])
+          clearTimeout(timer)
+
+          const total = chunks.reduce((a, c) => a + c.length, 0)
+          const merged = new Uint8Array(total)
+          let off = 0
+          for (const c of chunks) { merged.set(c, off); off += c.length }
+          if (dec.decode(merged) !== text) throw new Error(`echo mismatch on stream ${i}`)
+
+          await stream.close()
+          completed = i + 1
+          setStatus(`ok ${completed}/${n}`)
+        }
+        await conn.close()
+      } catch (e) {
+        resultEl.textContent = `stalled after ${completed}/${n}: ${e && e.message}`
+        try { await conn.close() } catch { /* ignore */ }
+      }
+      return completed
+    }
   </script>
 </body>
 </html>

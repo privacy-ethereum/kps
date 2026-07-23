@@ -96,6 +96,48 @@ func TestQUIC_MultiStream(t *testing.T) {
 	wg.Wait()
 }
 
+// TestQUIC_StreamCycling opens+closes far more streams than the QUIC
+// concurrent-stream budget (~100 by default) over one connection. It passes only
+// if each retired stream frees its slot so the budget recycles; a lifecycle leak
+// (a stream not closed under the hood) would exhaust it and block or fail
+// OpenStream well before the count. (QUIC delegates the slot budget to quic-go;
+// this guards KPS's stream open/close/retire lifecycle over it.)
+func TestQUIC_StreamCycling(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	ln := listenWith(t, ctx, echoHandler)
+	defer ln.Close()
+
+	conn, err := Dial(ctx, ln.Address("127.0.0.1"))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	const N = 200
+	for i := 0; i < N; i++ {
+		s, err := conn.OpenStream(ctx)
+		if err != nil {
+			t.Fatalf("open %d/%d (slot not freed?): %v", i, N, err)
+		}
+		msg := fmt.Sprintf("cycle-%d", i)
+		if _, err := s.Write([]byte(msg)); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+		if err := s.CloseWrite(); err != nil {
+			t.Fatalf("closeWrite %d: %v", i, err)
+		}
+		got, err := io.ReadAll(s)
+		if err != nil {
+			t.Fatalf("read %d: %v", i, err)
+		}
+		if string(got) != msg {
+			t.Fatalf("echo %d mismatch: got %q want %q", i, got, msg)
+		}
+		_ = s.Close()
+	}
+}
+
 // TestQUIC_MultiConn: multiple independent connections from one process to the
 // same address (SPEC §10.4).
 func TestQUIC_MultiConn(t *testing.T) {

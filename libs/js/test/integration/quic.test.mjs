@@ -35,6 +35,21 @@ test('many concurrent streams, each echoes its own payload', async () => {
   } finally { await conn.close() }
 })
 
+test('sustained cycling: 200 sequential streams reuse the concurrent budget', async () => {
+  // Open+close far more streams than the transport's concurrent-stream budget
+  // (~100 by default). Only possible if each retired stream frees its slot so
+  // the budget recycles; a lifecycle leak (a stream never closed under the
+  // hood) would exhaust it and openStream would reject well before 200.
+  const conn = await dial(server.address)
+  try {
+    const N = 200
+    for (let i = 0; i < N; i++) {
+      const echoed = await echoRoundTrip(conn, enc(`cycle-${i}`))
+      assert.equal(dec(echoed), `cycle-${i}`, `stream ${i} echo`)
+    }
+  } finally { await conn.close() }
+})
+
 test('large payload round-trips byte-exact (backpressure)', async () => {
   const conn = await dial(server.address)
   try {

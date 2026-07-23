@@ -40,6 +40,24 @@ async fn quic_multi_stream() {
     }
 }
 
+/// Open+close far more streams than the QUIC concurrent-stream budget (~100 by
+/// default) over one connection. Passes only if each retired stream frees its
+/// slot so the budget recycles; a lifecycle leak (a stream not closed under the
+/// hood) would exhaust it and block open_stream. QUIC delegates the slot budget
+/// to quinn; this guards KPS's stream open/close/retire lifecycle over it.
+#[tokio::test]
+async fn quic_stream_cycling() {
+    let (_l, addr) = start_echo_server().await;
+    let conn = timeout(T, kps::dial(&addr)).await.unwrap().unwrap();
+    const N: usize = 200;
+    for i in 0..N {
+        let msg = format!("cycle-{i}").into_bytes();
+        let echoed = echo_round_trip(conn.as_ref(), &msg).await;
+        assert_eq!(echoed, msg, "stream {i}");
+    }
+    conn.close().await.unwrap();
+}
+
 #[tokio::test]
 async fn quic_large_payload() {
     let (_l, addr) = start_echo_server().await;

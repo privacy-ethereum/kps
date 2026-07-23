@@ -91,3 +91,47 @@ async fn stream_limit_blocks_and_retires() {
     let s = timeout(T, client.open_stream()).await.expect("open after retirement").unwrap();
     drop(s);
 }
+
+/// Open 2×MAX_STREAMS streams, closing each, over one WebRTC connection. Only
+/// MAX_STREAMS may be open at once, so completing twice that many requires the
+/// peer's stream slots to be reclaimed on retirement and re-granted
+/// (MAX_STREAMS) repeatedly, not just once. A slot leak (a retired stream that
+/// never returns its slot) would let the first MAX_STREAMS opens through and
+/// then block open_stream forever, tripping the timeout. The block-and-retire
+/// test above exercises only a single reclaim; this exercises sustained
+/// recycling.
+///
+/// NOTE: webrtc-rs allocates SCTP stream ids monotonically, so this does NOT
+/// exercise stream-id *reuse*. Browsers free and reuse low ids as channels
+/// close, its own hazard (kps#4) — covered only by the Playwright browser leg.
+#[tokio::test]
+async fn stream_slots_recycle_across_many_streams() {
+    let (_l, client, server) = webrtc_pair().await;
+
+    // Server: echo every stream (copy input back, then FIN), forever.
+    tokio::spawn(async move {
+        while let Ok(s) = server.accept_stream().await {
+            tokio::spawn(async move {
+                let (mut rd, mut wr) = tokio::io::split(s);
+                let _ = tokio::io::copy(&mut rd, &mut wr).await;
+                let _ = wr.shutdown().await;
+            });
+        }
+    });
+
+    let total = 2 * MAX_STREAMS;
+    for i in 0..total {
+        // Past MAX_STREAMS this can only proceed if an earlier slot was reclaimed.
+        let s = timeout(T, client.open_stream())
+            .await
+            .unwrap_or_else(|_| panic!("open {i}/{total} timed out (slot not reclaimed?)"))
+            .unwrap();
+        let (mut rd, mut wr) = tokio::io::split(s);
+        let msg = format!("req-{i}").into_bytes();
+        timeout(T, wr.write_all(&msg)).await.unwrap().unwrap();
+        timeout(T, wr.shutdown()).await.unwrap().unwrap(); // FIN
+        let mut got = Vec::new();
+        timeout(T, rd.read_to_end(&mut got)).await.unwrap().unwrap(); // echo + peer FIN → retire
+        assert_eq!(got, msg, "echo {i} mismatch");
+    }
+}

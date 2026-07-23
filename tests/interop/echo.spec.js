@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url'
 const here = dirname(fileURLToPath(import.meta.url))
 const { goAddress, jsAddress, rustAddress, baseUrl } = JSON.parse(readFileSync(join(here, '.run-state.json'), 'utf8'))
 
+// Sequential streams to cycle on one connection — well past the ~2 the browser
+// leg currently manages before a reused SCTP id stalls (kps#4).
+const STREAM_CYCLES = 20
+
 // The real-browser WebRTC leg of the matrix: a Chromium page runs the JS
 // webrtc-client (the actual package, no polyfill) against ALL server
 // implementations over the single advertised address. Headless node:test
@@ -37,5 +41,22 @@ for (const [name, address] of [['Go server', goAddress], ['@kpstreams/server', j
     const ok = await page.evaluate(addr => window.runLargeEcho(addr), address)
     expect(ok).toBe(true)
     await expect(page.locator('#status')).toHaveText('done')
+  })
+
+  // Sustained cycling: many sequential streams on one connection. The browser
+  // frees and reuses low SCTP stream ids as each channel closes, so this is the
+  // only leg that exercises id reuse (Go/Rust clients allocate monotonically).
+  test(`browser webrtc-client cycles ${STREAM_CYCLES} sequential streams to ${name}`, async ({ page }) => {
+    page.on('pageerror', err => console.error('[page error]', err))
+    page.on('console', msg => {
+      if (msg.type() === 'error') console.error('[page console]', msg.text())
+    })
+
+    await page.goto(baseUrl)
+    const completed = await page.evaluate(
+      ({ addr, n }) => window.runManyStreams(addr, n),
+      { addr: address, n: STREAM_CYCLES },
+    )
+    expect(completed).toBe(STREAM_CYCLES)
   })
 }
