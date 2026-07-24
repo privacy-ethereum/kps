@@ -652,3 +652,65 @@ input:focus, select:focus {
   .explorer-search input { width: 100%; }
   .explorer-controls { width: 100%; }
 }
+
+/* ---- Prose: the hosted spec, rendered from SPEC.md (see vite.config.js) --- */
+.prose {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 40px 24px 72px;
+}
+.prose > article > :first-child { margin-top: 0; }
+/* Title line: the rendered <h1> plus the "View on GitHub" button, wrapped into
+   a flex row at build time. */
+.prose .doc-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 18px; flex-wrap: wrap; margin: 0 0 1em;
+}
+.prose .doc-head .btn { flex: none; white-space: nowrap; }
+.prose h1 { font-size: clamp(1.9rem, 4.5vw, 2.6rem); font-weight: 800; letter-spacing: -0.02em; margin: 0; }
+.prose h2 {
+  font-size: 1.45rem; font-weight: 700; margin: 2.4em 0 0.6em;
+  padding-top: 1.3em; border-top: 1px solid var(--border);
+}
+.prose h3 { font-size: 1.12rem; font-weight: 600; margin: 1.9em 0 0.5em; }
+.prose h4 { font-size: 1rem; font-weight: 600; color: var(--text); margin: 1.5em 0 0.4em; }
+.prose p, .prose li { color: var(--text-dim); }
+.prose p { margin: 0.9em 0; }
+.prose a { color: var(--violet-bright); }
+.prose a:hover { color: var(--text); }
+.prose strong { color: var(--text); font-weight: 600; }
+.prose ul, .prose ol { margin: 0.6em 0 1.1em; padding-left: 1.3em; }
+.prose li { font-size: 0.97rem; margin: 0.25em 0; }
+.prose li::marker { color: var(--violet); }
+.prose li > ul, .prose li > ol { margin: 0.3em 0 0; }
+/* Inline code */
+.prose :not(pre) > code {
+  font-family: var(--mono); font-size: 0.86em;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 5px; padding: 1px 6px; color: var(--violet-bright);
+}
+/* Shiki code blocks — background comes inline via colorReplacements (#08060d) */
+.prose pre {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 16px 18px; overflow-x: auto;
+  font-size: 0.84rem; line-height: 1.6; margin: 1em 0 1.4em;
+}
+.prose pre code { font-family: var(--mono); background: none; border: none; padding: 0; font-size: inherit; }
+.prose blockquote {
+  margin: 1em 0 1.4em; padding: 10px 18px;
+  border-left: 3px solid var(--violet-deep); background: var(--surface);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0; color: var(--text-muted);
+}
+.prose blockquote p { margin: 0; color: inherit; }
+/* Tables can be wide (error registry, §9) — scroll within their own box rather
+   than forcing the page to scroll horizontally. */
+.prose table {
+  width: 100%; border-collapse: collapse; font-size: 0.9rem;
+  margin: 1em 0 1.4em; display: block; overflow-x: auto;
+}
+.prose th, .prose td { border: 1px solid var(--border); padding: 9px 12px; text-align: left; vertical-align: top; }
+.prose thead th {
+  background: var(--surface); color: var(--text-muted);
+  font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; white-space: nowrap;
+}
+.prose hr { border: none; border-top: 1px solid var(--border); margin: 2.4em 0; }
