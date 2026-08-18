@@ -1,4 +1,4 @@
-module github.com/privacy-ethereum/kps/libs/go
+module github.com/ethereum/kps/libs/go
 
 go 1.24.0
 
