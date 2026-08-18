@@ -64,7 +64,7 @@ async function renderSpecMarkdown() {
   // Put the GitHub link on the title line: wrap the document's <h1> in a flex
   // row with the button, which flexbox centers at any viewport/font size.
   const gh =
-    '<a class="btn secondary sm" href="https://github.com/privacy-ethereum/kps/blob/main/SPEC.md" target="_blank" rel="noopener">View on GitHub →</a>'
+    '<a class="btn secondary sm" href="https://github.com/ethereum/kps/blob/main/SPEC.md" target="_blank" rel="noopener">View on GitHub →</a>'
   return html.replace(
     /<h1([^>]*)>([\s\S]*?)<\/h1>/,
     (_m, attrs, inner) => `<div class="doc-head"><h1${attrs}>${inner}</h1>${gh}</div>`,

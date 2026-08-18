@@ -7,7 +7,7 @@ members = ["kps", "kps-server", "kps-dial"]
 version = "0.2.2"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/privacy-ethereum/kps"
+repository = "https://github.com/ethereum/kps"
 
 [workspace.dependencies]
 kps = { path = "kps" }
@@ -33,5 +33,5 @@ anyhow = "1"
 #   data_channels), so a browser's reused SCTP stream id was swallowed — read
 #   hangs after ~2 streams (kps#4). Fixed by gating the claim on ReadyState::Open.
 [patch.crates-io]
-webrtc-sctp = { git = "https://github.com/privacy-ethereum/kps.git", rev = "a73a0a8f9e4f76f3b89ba1155562ec836bcf3f3b" }
-webrtc = { git = "https://github.com/privacy-ethereum/kps.git", rev = "4982e1c1cdce3baa3f703a746367a5e53ca64928" }
+webrtc-sctp = { git = "https://github.com/ethereum/kps.git", rev = "a73a0a8f9e4f76f3b89ba1155562ec836bcf3f3b" }
+webrtc = { git = "https://github.com/ethereum/kps.git", rev = "4982e1c1cdce3baa3f703a746367a5e53ca64928" }

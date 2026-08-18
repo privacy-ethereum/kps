@@ -30,7 +30,7 @@
         <nav class="nav-links">
           <a href="#how">How it works</a>
           <a href="./spec/">Spec</a>
-          <a class="gh" href="https://github.com/privacy-ethereum/kps" target="_blank" rel="noopener" aria-label="View source on GitHub" title="View source on GitHub">
+          <a class="gh" href="https://github.com/ethereum/kps" target="_blank" rel="noopener" aria-label="View source on GitHub" title="View source on GitHub">
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.92.58.1.79-.25.79-.56 0-.28-.01-1.02-.02-2-3.2.69-3.88-1.54-3.88-1.54-.52-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.18 1.18.92-.26 1.91-.39 2.89-.39.98 0 1.97.13 2.89.39 2.21-1.49 3.18-1.18 3.18-1.18.63 1.58.23 2.75.11 3.04.74.8 1.19 1.83 1.19 3.09 0 4.42-2.69 5.4-5.25 5.68.41.35.78 1.05.78 2.12 0 1.53-.01 2.76-.01 3.14 0 .31.21.67.8.56C20.71 21.39 24 17.08 24 12c0-6.35-5.15-11.5-11.5-11.5z"/></svg>
           </a>
           <a class="btn sm nav-cta" id="try-it" href="#demo">Try it →</a>
@@ -132,13 +132,13 @@
                 <div class="lang-head"><h3>Go</h3></div>
                 <p>Client and server, both transports on one UDP port. A Go module you can <code>go get</code>.</p>
                 <div class="lang-tags"><span class="tag">client</span><span class="tag">server</span><span class="tag">WebRTC</span><span class="tag">QUIC</span></div>
-                <code class="lang-install">go get github.com/privacy-ethereum/kps/libs/go</code>
+                <code class="lang-install">go get github.com/ethereum/kps/libs/go</code>
               </div>
               <div class="card lang-card">
                 <div class="lang-head"><h3>Rust</h3></div>
                 <p>Client and server, both transports, async on Tokio. The <code>kps</code> crate.</p>
                 <div class="lang-tags"><span class="tag">client</span><span class="tag">server</span><span class="tag">WebRTC</span><span class="tag">QUIC</span></div>
-                <a class="lang-install lang-install-link" href="https://github.com/privacy-ethereum/kps/tree/main/libs/rust#using-kps-in-your-project" target="_blank" rel="noopener">git dependency + vendored patches → libs/rust README</a>
+                <a class="lang-install lang-install-link" href="https://github.com/ethereum/kps/tree/main/libs/rust#using-kps-in-your-project" target="_blank" rel="noopener">git dependency + vendored patches → libs/rust README</a>
               </div>
             </div>
 
@@ -178,7 +178,7 @@
 
 <span class="k">const</span> conn   = <span class="k">await</span> <span class="f">dial</span>(<span class="s">'203.0.113.5:41108:uEiA…9Qw'</span>);
 <span class="k">const</span> stream = <span class="k">await</span> conn.<span class="f">openStream</span>(); <span class="c">// reliable, multiplexed bytes</span></pre>
-<pre class="lang-pane pane-go"><span class="k">import</span> kps <span class="s">"github.com/privacy-ethereum/kps/libs/go"</span>
+<pre class="lang-pane pane-go"><span class="k">import</span> kps <span class="s">"github.com/ethereum/kps/libs/go"</span>
 
 conn, _   := kps.<span class="f">Dial</span>(ctx, <span class="s">"203.0.113.5:41108:uEiA…9Qw"</span>)
 stream, _ := conn.<span class="f">OpenStream</span>(ctx) <span class="c">// reliable, multiplexed bytes</span></pre>
@@ -210,7 +210,7 @@ stream, _ := conn.<span class="f">OpenStream</span>(ctx) <span class="c">// reli
 console.<span class="f">log</span>(srv.<span class="f">address</span>(<span class="s">'203.0.113.5'</span>)); <span class="c">// ip:port:certhash</span>
 <span class="k">const</span> conn   = <span class="k">await</span> srv.<span class="f">accept</span>();
 <span class="k">const</span> stream = <span class="k">await</span> conn.<span class="f">acceptStream</span>();</pre>
-<pre class="lang-pane pane-go"><span class="k">import</span> kps <span class="s">"github.com/privacy-ethereum/kps/libs/go"</span>
+<pre class="lang-pane pane-go"><span class="k">import</span> kps <span class="s">"github.com/ethereum/kps/libs/go"</span>
 
 ln, _     := kps.<span class="f">Listen</span>(ctx, <span class="s">":41108"</span>, kps.Options{})
 fmt.<span class="f">Println</span>(ln.<span class="f">Address</span>(<span class="s">"203.0.113.5"</span>)) <span class="c">// ip:port:certhash</span>
@@ -259,7 +259,7 @@ stream, _ := conn.<span class="f">AcceptStream</span>(ctx)</pre>
               <div class="arch-arrow">→</div>
               <div class="arch-node"><div class="t">KPS server</div><p class="d">One self-signed cert; its hash <em>is</em> its identity</p></div>
             </div>
-            <p class="arch-note">The full details live in the <a href="./spec/">protocol spec</a> and <a href="https://github.com/privacy-ethereum/kps/blob/main/SECURITY.md" target="_blank" rel="noopener">security model</a>.</p>
+            <p class="arch-note">The full details live in the <a href="./spec/">protocol spec</a> and <a href="https://github.com/ethereum/kps/blob/main/SECURITY.md" target="_blank" rel="noopener">security model</a>.</p>
           </section>
 
           <!-- Final CTA -->
@@ -267,7 +267,7 @@ stream, _ := conn.<span class="f">AcceptStream</span>(ctx)</pre>
             <h2>Dial a key, from anywhere</h2>
             <div class="cta-row">
               <a class="btn" href="#demo">Launch the demo →</a>
-              <a class="btn secondary" href="https://github.com/privacy-ethereum/kps" target="_blank" rel="noopener">Read the docs</a>
+              <a class="btn secondary" href="https://github.com/ethereum/kps" target="_blank" rel="noopener">Read the docs</a>
             </div>
           </section>
         </main>
@@ -357,9 +357,9 @@ stream, _ := conn.<span class="f">AcceptStream</span>(ctx)</pre>
       <div class="footer-inner">
         <span>KPS — Key-Pinned Streams</span>
         <span class="spacer"></span>
-        <a href="https://github.com/privacy-ethereum/kps" target="_blank" rel="noopener">GitHub</a>
-        <a href="https://github.com/privacy-ethereum/kps/blob/main/SPEC.md" target="_blank" rel="noopener">Spec</a>
-        <a href="https://github.com/privacy-ethereum/kps/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a>
+        <a href="https://github.com/ethereum/kps" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/ethereum/kps/blob/main/SPEC.md" target="_blank" rel="noopener">Spec</a>
+        <a href="https://github.com/ethereum/kps/blob/main/SECURITY.md" target="_blank" rel="noopener">Security</a>
       </div>
     </footer>
 

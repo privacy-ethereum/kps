@@ -10,10 +10,10 @@ the connection cannot be intercepted — no domain, no certificate authority, no
 signalling server. In the browser this runs over WebRTC; native clients use
 QUIC; the same server address serves both.
 
-See the [project README](https://github.com/privacy-ethereum/kps#readme) and the
-[protocol spec](https://github.com/privacy-ethereum/kps/blob/main/SPEC.md). The
+See the [project README](https://github.com/ethereum/kps#readme) and the
+[protocol spec](https://github.com/ethereum/kps/blob/main/SPEC.md). The
 server also has a Go implementation at
-`github.com/privacy-ethereum/kps/libs/go`.
+`github.com/ethereum/kps/libs/go`.
 
 ## Packages
 

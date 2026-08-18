@@ -49,7 +49,7 @@ FIN/RESET/STOP_SENDING and datagrams natively, so â€” unlike the WebRTC client â
 this package does **not** use `@kpstreams/core/webrtc`.
 
 Interops with [`@kpstreams/server`](https://www.npmjs.com/package/@kpstreams/server)
-and the Go server (`github.com/privacy-ethereum/kps/libs/go`). Verified: QUIC
+and the Go server (`github.com/ethereum/kps/libs/go`). Verified: QUIC
 stream echo against both a JS and the Go reference server, plus a datagram
 round-trip against the JS server.
 

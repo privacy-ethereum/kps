@@ -6,9 +6,9 @@
   "type": "module",
   "license": "MIT",
   "author": "Andrew Morris",
-  "repository": { "type": "git", "url": "git+https://github.com/privacy-ethereum/kps.git", "directory": "libs/js/packages/core" },
-  "homepage": "https://github.com/privacy-ethereum/kps/tree/main/libs/js/packages/core#readme",
-  "bugs": "https://github.com/privacy-ethereum/kps/issues",
+  "repository": { "type": "git", "url": "git+https://github.com/ethereum/kps.git", "directory": "libs/js/packages/core" },
+  "homepage": "https://github.com/ethereum/kps/tree/main/libs/js/packages/core#readme",
+  "bugs": "https://github.com/ethereum/kps/issues",
   "sideEffects": false,
   "publishConfig": { "access": "public" },
   "exports": {

@@ -78,7 +78,7 @@ browser ↔ JS-server, and browser ↔ Rust paths. CI runs the lot.
 
 ```
 libs/js/        TypeScript npm packages (@kpstreams/*): core, webrtc-client, quic-client, server
-libs/go/        Go library + cmd/server & cmd/dial CLIs — import "github.com/privacy-ethereum/kps/libs/go"
+libs/go/        Go library + cmd/server & cmd/dial CLIs — import "github.com/ethereum/kps/libs/go"
 libs/rust/      Rust library (kps) + kps-server & kps-dial CLIs
 demos/chat/     Chat + eth-rpc demo (server-go + web) consuming the libraries
 tests/interop/  Playwright interop test — a browser dials the Go, JS and Rust servers
